@@ -696,19 +696,23 @@ function ensureCtx(){
   remoteAudioEl = document.createElement('audio');
   remoteAudioEl.autoplay = true;
   remoteAudioEl.setAttribute('playsinline', '');
-  remoteAudioEl.volume = 1;
+  /* 0–100% регулирует нативная громкость элемента (самый надёжный путь),
+     усиление >100% добавляет volGain */
+  remoteAudioEl.volume = Math.min(1, +el.volSlider.value / 100);
   remoteAudioEl.muted = false;
   elSourceNode = audioCtx.createMediaElementSource(remoteAudioEl);
-  volGain = audioCtx.createGain();
-  volGain.gain.value = +el.volSlider.value / 100;
   preAnalyser = audioCtx.createAnalyser();
   preAnalyser.fftSize = 1024;
   inGateGain = audioCtx.createGain();
   inGateGain.gain.value = 1;
-  elSourceNode.connect(volGain);
-  volGain.connect(preAnalyser);
+  /* громкость — ПОСЛЕДНИЙ узел перед колонками, чтобы ползунок всегда
+     был «последним словом» и его было гарантированно слышно */
+  volGain = audioCtx.createGain();
+  volGain.gain.value = +el.volSlider.value > 100 ? +el.volSlider.value / 100 : 1;
+  elSourceNode.connect(preAnalyser);
   preAnalyser.connect(inGateGain);
-  inGateGain.connect(audioCtx.destination);
+  inGateGain.connect(volGain);
+  volGain.connect(audioCtx.destination);
 
   /* --- узлы микрофона (общие для всех звонков) --- */
   micPreAnalyser = audioCtx.createAnalyser();
@@ -1218,8 +1222,16 @@ el.volSlider.addEventListener('input', () => {
   const v = +el.volSlider.value;
   el.volVal.textContent = v + '%';
   fillSlider(el.volSlider);
-  if (volGain) volGain.gain.value = v / 100; /* прямое присваивание — без автоматизаций */
-  console.log('[waygram] громкость приёма: ' + v + '%');
+  /* Двойное управление, диапазоны не пересекаются (нет двойного затухания):
+     0–100%   -> нативная громкость audio-элемента (применяется ещё до графа,
+                 не зависит от Web Audio и любых автоматизаций);
+     100–200% -> усиление через volGain (последний узел перед колонками). */
+  if (remoteAudioEl) remoteAudioEl.volume = Math.min(1, v / 100);
+  if (volGain){
+    if (audioCtx) volGain.gain.cancelScheduledValues(audioCtx.currentTime); /* снять «зависшие» автоматизации */
+    volGain.gain.value = v > 100 ? v / 100 : 1;
+  }
+  console.log('[waygram] громкость приёма: ' + v + '% (элемент ' + Math.round(Math.min(1, v / 100) * 100) + '%, усиление ×' + (v > 100 ? (v / 100).toFixed(2) : '1') + ')');
 });
 el.volSlider.addEventListener('dblclick', () => {
   el.volSlider.value = 100;
