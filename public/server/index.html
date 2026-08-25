@@ -260,6 +260,15 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
 .dock-meter .meter{flex:1;margin:0}
 .dock-actions{display:flex;gap:10px;margin-top:16px}
 .dock-actions .block{flex:1}
+.sound-hint{
+  display:flex;align-items:center;gap:9px;width:100%;margin:0 0 12px;padding:10px 12px;
+  border-radius:var(--r-sm);border:1px solid rgba(255,180,84,.55);
+  background:rgba(255,180,84,.14);color:var(--amber);
+  font-family:var(--font-body);font-size:.82rem;font-weight:600;text-align:left;cursor:pointer;
+  animation:hintPulse 1.3s ease-in-out infinite;
+}
+.sound-hint svg{width:17px;height:17px;flex:none}
+@keyframes hintPulse{50%{background:rgba(255,180,84,.28)}}
 
 /* тосты */
 .toasts{position:fixed;top:18px;right:18px;z-index:80;display:flex;flex-direction:column;gap:10px;max-width:min(340px,calc(100vw - 30px))}
@@ -440,6 +449,11 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
     <span id="callTimer" class="mono timer">00:00</span>
   </div>
 
+  <button id="soundHint" class="sound-hint" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14"/></svg>
+    Браузер держит звук на паузе — нажмите, чтобы включить
+  </button>
+
   <div class="dock-meter">
     <div class="meter"><div id="peerMeterFill" class="meter-fill teal"></div></div>
     <span class="hint mono">приём</span>
@@ -466,6 +480,9 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
 
   <div class="dock-actions">
     <button id="dockMuteBtn" class="btn ghost icon" title="Микрофон вкл/выкл"></button>
+    <button id="testToneBtn" class="btn ghost icon" title="Проверить звук (короткий сигнал)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+    </button>
     <button id="hangupBtn" class="btn danger block">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 1.9z" transform="rotate(135 12 12)"/></svg>
       Завершить
@@ -518,6 +535,7 @@ const el = {
   volSlider: $('volSlider'), volVal: $('volVal'),
   noiseSlider: $('noiseSlider'), noiseToggle: $('noiseToggle'), noiseVal: $('noiseVal'),
   dockMuteBtn: $('dockMuteBtn'), hangupBtn: $('hangupBtn'),
+  soundHint: $('soundHint'), testToneBtn: $('testToneBtn'),
   toasts: $('toasts')
 };
 
@@ -530,10 +548,14 @@ let myNickname = localStorage.getItem('waygram_nickname') || '';
 let presenceMap = {};
 
 let localStream = null, micSource = null, micActive = false, isMuted = false;
-let audioCtx = null, muteGain = null, micAnalyser = null, micDest = null;
-let micGate = null, micGateDb = -50, micGateOn = true;
-let volGain = null, inGate = null, inAnalyser = null;
+let audioCtx = null, muteGain = null, micDest = null;
+let micPreAnalyser = null, micGateGain = null, micGateDb = -50, micGateOn = true;
+let volGain = null, preAnalyser = null, inGateGain = null;
 let inGateDb = -50, inGateOn = true;
+let audioWatchdog = null;
+/* состояние гейтов (гистерезис, как у настоящего noise gate) */
+const micGateState = { open: false, lastTarget: -1 };
+const inGateState  = { open: false, lastTarget: -1 };
 
 let pc = null, currentCallId = null, isCaller = false, callPhase = 'idle';
 let peerNickname = null, peerUid = null, callStartedAt = 0, dialTimer = null;
@@ -592,163 +614,116 @@ function fillSlider(input){
 }
 
 /* ================================================================
-   ШУМОПОДАВЛЯТЕЛЬ (noise gate) — AudioWorklet + запасной вариант.
-   Каждый гейт регистрируется под УНИКАЛЬНЫМ именем процессора,
-   поэтому повторная регистрация невозможна (ошибка
-   "already registered" исключена).
-   ================================================================ */
-const GATE_WORKLET_TEMPLATE = [
-'class WGNoiseGate extends AudioWorkletProcessor {',
-'  constructor(){',
-'    super();',
-'    this.open = false; this.gain = 1; this.thresholdDb = -50; this.enabled = true;',
-'    this.port.onmessage = (e) => {',
-'      const d = e.data || {};',
-'      if (typeof d.threshold === "number") this.thresholdDb = d.threshold;',
-'      if (typeof d.enabled === "boolean") this.enabled = d.enabled;',
-'    };',
-'  }',
-'  process(inputs, outputs){',
-'    const inp = inputs[0], out = outputs[0];',
-'    if (!inp || !inp.length || !out || !out.length) return true;',
-'    const ch0 = inp[0]; let peak = 0;',
-'    for (let i = 0; i < ch0.length; i++){ const v = ch0[i] < 0 ? -ch0[i] : ch0[i]; if (v > peak) peak = v; }',
-'    const th = Math.pow(10, this.thresholdDb / 20);',
-'    if (!this.open && peak >= th) this.open = true;',
-'    else if (this.open && peak < th * 0.5) this.open = false;',
-'    const target = this.enabled ? (this.open ? 1 : 0.00001) : 1;',
-'    const ms = target > this.gain ? 6 : 90;',
-'    const coeff = Math.exp(-128 / ((ms / 1000) * sampleRate));',
-'    this.gain = target + (this.gain - target) * coeff;',
-'    for (let c = 0; c < out.length; c++){',
-'      const src = inp[c] || ch0, dst = out[c];',
-'      for (let i = 0; i < dst.length; i++) dst[i] = src[i] * this.gain;',
-'    }',
-'    return true;',
-'  }',
-'}',
-'registerProcessor("__GATE_NAME__", WGNoiseGate);'
-].join('\n');
-
-let gateSeq = 0;
-async function createNoiseGate(ctx){
-  const name = 'wg-noise-gate-' + (++gateSeq);
-  if (ctx.audioWorklet){
-    try {
-      const src = GATE_WORKLET_TEMPLATE.replace('__GATE_NAME__', name);
-      const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
-      await ctx.audioWorklet.addModule(url);
-      URL.revokeObjectURL(url);
-      const node = new AudioWorkletNode(ctx, name, {
-        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2]
-      });
-      return {
-        kind: 'worklet', input: node, output: node,
-        setThreshold: db => node.port.postMessage({ threshold: db }),
-        setEnabled:   b  => node.port.postMessage({ enabled: b })
-      };
-    } catch (err){ console.warn('AudioWorklet недоступен, использую запасной гейт', err); }
-  }
-  /* запасной вариант: ScriptProcessor.
-     ВАЖНО: вешаем его выход ещё и на destination через нулевую громкость,
-     иначе браузер может не обрабатывать процессор вообще. */
-  const sp = ctx.createScriptProcessor(2048, 1, 1);
-  const st = { open: false, gain: 1, thresholdDb: -50, enabled: true };
-  sp.onaudioprocess = (e) => {
-    const inp = e.inputBuffer.getChannelData(0);
-    const outp = e.outputBuffer.getChannelData(0);
-    let peak = 0;
-    for (let i = 0; i < inp.length; i++){ const v = Math.abs(inp[i]); if (v > peak) peak = v; }
-    const th = Math.pow(10, st.thresholdDb / 20);
-    if (!st.open && peak >= th) st.open = true;
-    else if (st.open && peak < th * 0.5) st.open = false;
-    const target = st.enabled ? (st.open ? 1 : 0.00001) : 1;
-    const ms = target > st.gain ? 6 : 90;
-    const coeff = Math.exp(-1 / ((ms / 1000) * ctx.sampleRate));
-    for (let i = 0; i < inp.length; i++){
-      st.gain = target + (st.gain - target) * coeff;
-      outp[i] = inp[i] * st.gain;
-    }
-  };
-  const silencer = ctx.createGain();
-  silencer.gain.value = 0;
-  sp.connect(silencer);
-  silencer.connect(ctx.destination);
-  return {
-    kind: 'scriptprocessor', input: sp, output: sp,
-    setThreshold: db => { st.thresholdDb = db; },
-    setEnabled:   b  => { st.enabled = b; }
-  };
-}
-
-/* ================================================================
-   АУДИО-ЦЕПОЧКА. База создаётся синхронно, гейты — асинхронно,
-   но цепочка ПРИЁМА всегда собрана ДО первого ontrack.
-   приём:   remoteStream -> MediaStreamSource -> volGain -> [гейт] -> inAnalyser -> колонки
-   микрофон: mic -> [гейт] -> muteGain -> micAnalyser -> micDest (в звонок)
-   Никаких <audio>-элементов: remote-поток идёт в граф напрямую,
-   поэтому нет проблем с autoplay и MediaElementSource.
+   АУДИО-ЦЕПОЧКА. Собирается СИНХРОННО из нативных узлов Web Audio —
+   без AudioWorklet и ScriptProcessor (именно они давали ошибки в
+   консоли и могли рвать звук в тишину).
+   приём:    remoteStream -> MediaStreamSource -> volGain ->
+             preAnalyser -> inGateGain(GainNode) -> колонки
+   микрофон: mic -> micPreAnalyser -> micGateGain(GainNode) ->
+             muteGain -> micDest (уходит в звонок)
+   Шумоподавление = GainNode, которым управляет анализ уровня звука
+   (rAF + страховочный интервал, чтобы работало и в фоновой вкладке).
    ================================================================ */
 function ensureCtx(){
   if (audioCtx) return audioCtx;
   const AC = window.AudioContext || window.webkitAudioContext;
   audioCtx = new AC();
+  debug('AudioContext создан (' + audioCtx.state + ')');
+  audioCtx.addEventListener('statechange', () => debug('AudioContext: ' + audioCtx.state));
 
-  /* --- узлы приёма --- */
+  /* --- узлы приёма (всё синхронно, звук может пойти сразу) --- */
   volGain = audioCtx.createGain();
   volGain.gain.value = +el.volSlider.value / 100;
-  inAnalyser = audioCtx.createAnalyser();
-  inAnalyser.fftSize = 1024;
+  preAnalyser = audioCtx.createAnalyser();
+  preAnalyser.fftSize = 1024;
+  inGateGain = audioCtx.createGain();
+  inGateGain.gain.value = 1;
+  volGain.connect(preAnalyser);
+  preAnalyser.connect(inGateGain);
+  inGateGain.connect(audioCtx.destination);
 
   /* --- узлы микрофона (общие для всех звонков) --- */
+  micPreAnalyser = audioCtx.createAnalyser();
+  micPreAnalyser.fftSize = 1024;
+  micGateGain = audioCtx.createGain();
+  micGateGain.gain.value = 1;
   muteGain = audioCtx.createGain();
   muteGain.gain.value = isMuted ? 0 : 1;
-  micAnalyser = audioCtx.createAnalyser();
-  micAnalyser.fftSize = 1024;
   micDest = audioCtx.createMediaStreamDestination();
-  muteGain.connect(micAnalyser);
-  micAnalyser.connect(micDest);
+  micPreAnalyser.connect(micGateGain);
+  micGateGain.connect(muteGain);
+  muteGain.connect(micDest);
 
   return audioCtx;
-}
-
-let chainReady = null;
-function ensureAudioChain(){
-  ensureCtx();
-  if (!chainReady){
-    chainReady = (async () => {
-      /* сначала звук идёт напрямую, чтобы не ждать ворклет */
-      volGain.connect(inAnalyser);
-      inAnalyser.connect(audioCtx.destination);
-      const g = await createNoiseGate(audioCtx);
-      inGate = g;
-      g.setThreshold(inGateDb);
-      g.setEnabled(inGateOn);
-      try {
-        volGain.disconnect();
-        volGain.connect(g.input);
-        g.output.connect(inAnalyser);
-        debug('шумовой гейт приёма подключён (' + g.kind + ')');
-      } catch (err){
-        console.warn(err);
-        try { volGain.disconnect(); } catch (e2){}
-        try { volGain.connect(inAnalyser); } catch (e2){}
-      }
-    })().catch(err => {
-      console.warn('ошибка сборки аудиоцепочки', err);
-      chainReady = null; /* разрешить повторную попытку */
-    });
-  }
-  return chainReady;
 }
 
 function unlockAudio(){
   ensureCtx();
   if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-  ensureAudioChain();
 }
 window.addEventListener('pointerdown', unlockAudio, { passive: true });
 window.addEventListener('keydown', unlockAudio);
+
+/* ---------- шумовой гейт: GainNode + анализ уровня с гистерезисом ---------- */
+function driveGate(analyser, gainNode, st, db, on){
+  if (!analyser || !gainNode || !audioCtx) return;
+  const th = Math.pow(10, db / 20);
+  const lvl = level(analyser);
+  if (!st.open && lvl >= th) st.open = true;
+  else if (st.open && lvl < th * 0.4) st.open = false;
+  const target = (!on || st.open) ? 1 : 0.0001;
+  if (st.lastTarget !== target){
+    st.lastTarget = target;
+    /* открывается быстро (8 мс), закрывается плавно (60 мс) */
+    gainNode.gain.setTargetAtTime(target, audioCtx.currentTime, target > 0.5 ? 0.008 : 0.06);
+  }
+}
+
+/* ---------- сторож звука: контекст заморожен -> будим и подсказываем ---------- */
+function showSoundHint(){ el.soundHint.hidden = false; }
+function hideSoundHint(){ el.soundHint.hidden = true; }
+function startAudioWatchdog(){
+  stopAudioWatchdog();
+  audioWatchdog = setInterval(() => {
+    if (!audioCtx || !currentCallId) return;
+    if (audioCtx.state === 'suspended'){
+      audioCtx.resume().catch(() => {});
+      showSoundHint();
+    } else {
+      hideSoundHint();
+    }
+  }, 900);
+}
+function stopAudioWatchdog(){
+  if (audioWatchdog){ clearInterval(audioWatchdog); audioWatchdog = null; }
+  hideSoundHint();
+}
+el.soundHint.addEventListener('click', () => { unlockAudio(); hideSoundHint(); });
+
+/* ---------- тест звука: тон идёт через ту же цепочку, что и голос
+   собеседника (громкость -> шумоподавление -> колонки) ---------- */
+function playTestTone(){
+  ensureCtx();
+  audioCtx.resume().then(() => {
+    [660, 880].forEach((f, i) => {
+      const o = audioCtx.createOscillator();
+      o.type = 'sine'; o.frequency.value = f;
+      const g = audioCtx.createGain();
+      const s = audioCtx.currentTime + 0.02 + i * 0.45;
+      g.gain.setValueAtTime(0.0001, s);
+      g.gain.exponentialRampToValueAtTime(0.25, s + 0.03);
+      g.gain.setValueAtTime(0.25, s + 0.3);
+      g.gain.exponentialRampToValueAtTime(0.0001, s + 0.42);
+      o.connect(g); g.connect(volGain); /* через цепочку приёма */
+      o.start(s); o.stop(s + 0.45);
+    });
+    debug('тест звука (AudioContext: ' + audioCtx.state + ')');
+  }).catch(err => {
+    console.warn(err);
+    toast('Браузер блокирует звук — кликните по странице и попробуйте ещё раз', 'warn');
+  });
+}
+el.testToneBtn.addEventListener('click', playTestTone);
 
 /* ---------- индикаторы уровня + таймер ---------- */
 const levelBuf = new Uint8Array(2048);
@@ -760,12 +735,20 @@ function level(analyser){
   for (let i = 0; i < n; i++){ const v = (levelBuf[i] - 128) / 128; sum += v * v; }
   return Math.min(1, Math.sqrt(sum / n) * 3.4);
 }
-(function loop(){
-  el.micMeter.style.width  = (micActive ? level(micAnalyser) * 100 : 0) + '%';
-  el.peerMeter.style.width = (currentCallId ? level(inAnalyser) * 100 : 0) + '%';
+function tick(){
+  const ml = micActive ? level(micPreAnalyser) : 0;
+  el.micMeter.style.width = (ml * 100) + '%';
+  if (micActive) driveGate(micPreAnalyser, micGateGain, micGateState, micGateDb, micGateOn);
+
+  const pl = currentCallId ? level(preAnalyser) : 0;
+  el.peerMeter.style.width = (pl * 100) + '%';
+  if (currentCallId) driveGate(preAnalyser, inGateGain, inGateState, inGateDb, inGateOn);
+
   if (callStartedAt) el.callTimer.textContent = fmtDur(Date.now() - callStartedAt);
-  requestAnimationFrame(loop);
-})();
+}
+(function loop(){ tick(); requestAnimationFrame(loop); })();
+/* страховка: в фоновой вкладке rAF замирает, а гейт должен работать */
+setInterval(tick, 120);
 
 /* ================================================================
    НИК / ВХОД
@@ -948,7 +931,7 @@ el.sendForm.addEventListener('submit', async (e) => {
    МИКРОФОН
    ================================================================ */
 async function enableMic(deviceId){
-  await ensureAudioChain();
+  ensureCtx();
   await audioCtx.resume().catch(() => {});
   const constraints = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
   if (deviceId) constraints.audio.deviceId = { exact: deviceId };
@@ -966,16 +949,11 @@ async function enableMic(deviceId){
   if (localStream) localStream.getTracks().forEach(t => t.stop());
   localStream = stream;
 
-  /* пересобираем вход цепочки, сам гейт создаётся один раз */
-  if (!micGate){
-    micGate = await createNoiseGate(audioCtx);
-    micGate.setThreshold(micGateDb);
-    micGate.setEnabled(micGateOn);
-    micGate.output.connect(muteGain);
-  }
+  /* пересобираем вход цепочки (гейт — GainNode, уже в графе) */
   if (micSource) { try { micSource.disconnect(); } catch (e){} }
   micSource = audioCtx.createMediaStreamSource(stream);
-  micSource.connect(micGate.input);
+  micSource.connect(micPreAnalyser);
+  micGateState.open = false; micGateState.lastTarget = -1;
 
   micActive = true;
   el.micBtn.disabled = true;
@@ -1053,11 +1031,11 @@ el.micGateSlider.addEventListener('input', () => {
   micGateDb = +el.micGateSlider.value;
   el.micGateVal.textContent = fmtDb(micGateDb);
   fillSlider(el.micGateSlider);
-  if (micGate) micGate.setThreshold(micGateDb);
+  micGateState.lastTarget = -1; /* применить сразу */
 });
 el.micGateToggle.addEventListener('change', () => {
   micGateOn = el.micGateToggle.checked;
-  if (micGate) micGate.setEnabled(micGateOn);
+  micGateState.lastTarget = -1;
 });
 
 /* ================================================================
@@ -1077,7 +1055,7 @@ el.noiseSlider.addEventListener('input', () => {
   inGateDb = +el.noiseSlider.value;
   el.noiseVal.textContent = fmtDb(inGateDb);
   fillSlider(el.noiseSlider);
-  if (inGate) inGate.setThreshold(inGateDb);
+  inGateState.lastTarget = -1; /* применить сразу */
 });
 el.noiseSlider.addEventListener('dblclick', () => {
   el.noiseSlider.value = -50;
@@ -1085,7 +1063,7 @@ el.noiseSlider.addEventListener('dblclick', () => {
 });
 el.noiseToggle.addEventListener('change', () => {
   inGateOn = el.noiseToggle.checked;
-  if (inGate) inGate.setEnabled(inGateOn);
+  inGateState.lastTarget = -1;
 });
 fillSlider(el.volSlider); fillSlider(el.noiseSlider); fillSlider(el.micGateSlider);
 
@@ -1111,22 +1089,27 @@ function showDock(){
   paintAvatar(el.peerAvatar, peerNickname);
   el.callTimer.textContent = '00:00';
   callStartedAt = 0;
+  startAudioWatchdog();
 }
 function hideDock(){ el.dock.hidden = true; }
 
 function attachCommon(conn){
-  conn.ontrack = async (e) => {
-    debug('получен аудиопоток собеседника');
+  conn.ontrack = (e) => {
     const stream = e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]);
+    const track = e.track;
+    debug('получен аудиопоток (track: ' + track.readyState + ', muted=' + track.muted + ')');
     remoteStream = stream;
     try {
-      await ensureAudioChain();
+      ensureCtx();
       unlockAudio();
       /* старое соединение — убрать (актуально при пересоздании трека) */
       if (remoteSourceNode){ try { remoteSourceNode.disconnect(); } catch (err){} }
       remoteSourceNode = audioCtx.createMediaStreamSource(stream);
       remoteSourceNode.connect(volGain);
-      debug('remote-поток подключён к аудиоцепочке');
+      inGateState.open = false; inGateState.lastTarget = -1;
+      debug('remote подключён к цепочке (AudioContext: ' + audioCtx.state + ')');
+      track.addEventListener('mute', () => debug('трек собеседника: mute'));
+      track.addEventListener('unmute', () => debug('трек собеседника: unmute'));
     } catch (err){
       console.warn(err);
       toast('Не удалось подключить звук собеседника', 'err');
@@ -1411,7 +1394,7 @@ el.rejectBtn.addEventListener('click', async () => {
 /* ---------- завершение звонка ---------- */
 function resetCallState(){
   if (dialTimer){ clearTimeout(dialTimer); dialTimer = null; }
-  stopRingtone(); stopTitleFlash();
+  stopRingtone(); stopTitleFlash(); stopAudioWatchdog();
   if (pc){ try { pc.close(); } catch (e){} pc = null; }
   if (remoteSourceNode){ try { remoteSourceNode.disconnect(); } catch (e){} remoteSourceNode = null; }
   if (remoteStream){ remoteStream.getTracks().forEach(t => { try { t.stop(); } catch (e){} }); remoteStream = null; }
