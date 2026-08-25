@@ -269,6 +269,10 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
 }
 .sound-hint svg{width:17px;height:17px;flex:none}
 @keyframes hintPulse{50%{background:rgba(255,180,84,.28)}}
+.out-row{display:flex;align-items:center;gap:10px;margin:10px 0 2px}
+.out-row label{font-size:.8rem;color:var(--muted);white-space:nowrap}
+.out-row select{flex:1;font-size:.82rem;padding:8px 32px 8px 10px;background-position:right 9px center}
+.diag{margin-top:12px;font-size:.64rem;color:var(--dim);line-height:1.6;min-height:1em}
 
 /* тосты */
 .toasts{position:fixed;top:18px;right:18px;z-index:80;display:flex;flex-direction:column;gap:10px;max-width:min(340px,calc(100vw - 30px))}
@@ -459,6 +463,11 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
     <span class="hint mono">приём</span>
   </div>
 
+  <div id="outRow" class="out-row">
+    <label for="outSelect">Вывод звука</label>
+    <select id="outSelect"><option value="">Системное устройство</option></select>
+  </div>
+
   <div class="ctl" style="margin-top:12px;padding-top:12px">
     <div class="ctl-head">
       <label for="volSlider">Громкость собеседника</label>
@@ -478,10 +487,15 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
     <p class="hint">Всё, что тише порога (клавиатура, вентилятор), глушится. Правее — жёстче.</p>
   </div>
 
+  <div id="audioDiag" class="diag mono"></div>
+
   <div class="dock-actions">
     <button id="dockMuteBtn" class="btn ghost icon" title="Микрофон вкл/выкл"></button>
-    <button id="testToneBtn" class="btn ghost icon" title="Проверить звук (короткий сигнал)">
+    <button id="testToneBtn" class="btn ghost icon" title="Сигнал через цепочку звонка">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+    </button>
+    <button id="testDirectBtn" class="btn ghost icon" title="Сигнал напрямую в колонки (в обход цепочки)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
     </button>
     <button id="hangupBtn" class="btn danger block">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 1.9z" transform="rotate(135 12 12)"/></svg>
@@ -535,7 +549,8 @@ const el = {
   volSlider: $('volSlider'), volVal: $('volVal'),
   noiseSlider: $('noiseSlider'), noiseToggle: $('noiseToggle'), noiseVal: $('noiseVal'),
   dockMuteBtn: $('dockMuteBtn'), hangupBtn: $('hangupBtn'),
-  soundHint: $('soundHint'), testToneBtn: $('testToneBtn'),
+  soundHint: $('soundHint'), testToneBtn: $('testToneBtn'), testDirectBtn: $('testDirectBtn'),
+  outRow: $('outRow'), outSelect: $('outSelect'), audioDiag: $('audioDiag'),
   toasts: $('toasts')
 };
 
@@ -560,7 +575,8 @@ const inGateState  = { open: false, lastTarget: -1 };
 let pc = null, currentCallId = null, isCaller = false, callPhase = 'idle';
 let peerNickname = null, peerUid = null, callStartedAt = 0, dialTimer = null;
 let pendingIncoming = null, shownIncomingId = null;
-let remoteSourceNode = null, remoteStream = null;
+let remoteAudioEl = null, elSourceNode = null, remoteStream = null;
+let outputsFilled = false;
 const processedSignals = new Set();
 const pendingCandidates = [];
 const busyReplied = new Set();
@@ -624,6 +640,18 @@ function fillSlider(input){
    Шумоподавление = GainNode, которым управляет анализ уровня звука
    (rAF + страховочный интервал, чтобы работало и в фоновой вкладке).
    ================================================================ */
+/* ================================================================
+   АУДИО-ЦЕПОЧКА. Воспроизведение идёт через настоящий <audio>-элемент
+   (так звук стабильно играет во всех браузерах: элемент сам
+   «будит» дорожки потока), а элемент подключён в Web Audio граф
+   через MediaElementSource, поэтому громкость/шумоподавление/индикатор
+   работают. Элемент и источник создаются ОДИН РАЗ — дальше меняется
+   только srcObject (это чинит баг оригинала с повторным созданием).
+   приём:    <audio> -> MediaElementSource -> volGain ->
+             preAnalyser -> inGateGain(GainNode) -> колонки
+   микрофон: mic -> micPreAnalyser -> micGateGain(GainNode) ->
+             muteGain -> micDest (уходит в звонок)
+   ================================================================ */
 function ensureCtx(){
   if (audioCtx) return audioCtx;
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -631,13 +659,20 @@ function ensureCtx(){
   debug('AudioContext создан (' + audioCtx.state + ')');
   audioCtx.addEventListener('statechange', () => debug('AudioContext: ' + audioCtx.state));
 
-  /* --- узлы приёма (всё синхронно, звук может пойти сразу) --- */
+  /* --- приём: audio-элемент -> граф -> колонки --- */
+  remoteAudioEl = document.createElement('audio');
+  remoteAudioEl.autoplay = true;
+  remoteAudioEl.setAttribute('playsinline', '');
+  remoteAudioEl.volume = 1;
+  remoteAudioEl.muted = false;
+  elSourceNode = audioCtx.createMediaElementSource(remoteAudioEl);
   volGain = audioCtx.createGain();
   volGain.gain.value = +el.volSlider.value / 100;
   preAnalyser = audioCtx.createAnalyser();
   preAnalyser.fftSize = 1024;
   inGateGain = audioCtx.createGain();
   inGateGain.gain.value = 1;
+  elSourceNode.connect(volGain);
   volGain.connect(preAnalyser);
   preAnalyser.connect(inGateGain);
   inGateGain.connect(audioCtx.destination);
@@ -657,9 +692,17 @@ function ensureCtx(){
   return audioCtx;
 }
 
+function tryPlayRemote(){
+  if (!remoteAudioEl || !remoteAudioEl.srcObject) return;
+  remoteAudioEl.play()
+    .then(() => debug('воспроизведение собеседника запущено'))
+    .catch(() => {}); /* без жеста не получится — watchdog повторит */
+}
+
 function unlockAudio(){
   ensureCtx();
   if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  tryPlayRemote();
 }
 window.addEventListener('pointerdown', unlockAudio, { passive: true });
 window.addEventListener('keydown', unlockAudio);
@@ -690,6 +733,8 @@ function startAudioWatchdog(){
       audioCtx.resume().catch(() => {});
       showSoundHint();
     } else {
+      /* элемент мог не стартовать без жеста — пробуем запустить */
+      if (remoteAudioEl && remoteAudioEl.srcObject && remoteAudioEl.paused) remoteAudioEl.play().catch(() => {});
       hideSoundHint();
     }
   }, 900);
@@ -699,6 +744,42 @@ function stopAudioWatchdog(){
   hideSoundHint();
 }
 el.soundHint.addEventListener('click', () => { unlockAudio(); hideSoundHint(); });
+
+/* ---------- устройства вывода звука (Chrome/Edge: setSinkId) ---------- */
+async function refreshOutputDevices(){
+  if (outputsFilled) return;
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const outs = devs.filter(d => d.kind === 'audiooutput');
+    if (!outs.length) { el.outRow.hidden = true; return; }
+    outputsFilled = true;
+    el.outSelect.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = ''; def.textContent = 'Системное устройство';
+    el.outSelect.appendChild(def);
+    outs.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId; o.textContent = d.label || ('Динамики ' + (i + 1));
+      el.outSelect.appendChild(o);
+    });
+    if (!(audioCtx && audioCtx.setSinkId)){
+      const o = document.createElement('option');
+      o.disabled = true; o.textContent = '(переключение — только Chrome/Edge)';
+      el.outSelect.appendChild(o);
+    }
+  } catch (e){ console.warn(e); }
+}
+el.outSelect.addEventListener('change', async () => {
+  ensureCtx();
+  if (typeof audioCtx.setSinkId !== 'function'){
+    toast('Этот браузер не умеет переключать вывод — выберите устройство в настройках системы', 'warn');
+    return;
+  }
+  try {
+    await audioCtx.setSinkId(el.outSelect.value || '');
+    toast('Устройство вывода переключено', 'ok');
+  } catch (err){ toast('Не удалось переключить вывод: ' + err.message, 'err'); }
+});
 
 /* ---------- тест звука: тон идёт через ту же цепочку, что и голос
    собеседника (громкость -> шумоподавление -> колонки) ---------- */
@@ -717,13 +798,38 @@ function playTestTone(){
       o.connect(g); g.connect(volGain); /* через цепочку приёма */
       o.start(s); o.stop(s + 0.45);
     });
-    debug('тест звука (AudioContext: ' + audioCtx.state + ')');
+    debug('тест звука через цепочку (AudioContext: ' + audioCtx.state + ')');
   }).catch(err => {
     console.warn(err);
     toast('Браузер блокирует звук — кликните по странице и попробуйте ещё раз', 'warn');
   });
 }
 el.testToneBtn.addEventListener('click', playTestTone);
+
+/* ---------- прямой тест: осциллятор сразу в колонки, минуя ВСЮ цепочку.
+   Если и он молчит — дело в браузере/системе, не в коде ---------- */
+function playDirectTone(){
+  ensureCtx();
+  audioCtx.resume().then(() => {
+    const o = audioCtx.createOscillator();
+    o.type = 'triangle'; o.frequency.value = 520;
+    const g = audioCtx.createGain();
+    const s = audioCtx.currentTime + 0.02;
+    g.gain.setValueAtTime(0.0001, s);
+    g.gain.exponentialRampToValueAtTime(0.3, s + 0.03);
+    g.gain.setValueAtTime(0.3, s + 0.35);
+    g.gain.exponentialRampToValueAtTime(0.0001, s + 0.55);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(s); o.stop(s + 0.6);
+    debug('прямой тест звука (ctx: ' + audioCtx.state + ', вывод: ' + (audioCtx.sinkId || 'системный') + ')');
+    if (audioCtx.state !== 'running'){
+      toast('AudioContext не запустился — кликните по странице и нажмите ещё раз', 'warn');
+    } else {
+      toast('Если сигнала нет — проверьте: значок звука в адресной строке, микшер громкости системы и устройство в списке «Вывод звука»', 'warn');
+    }
+  }).catch(err => { console.warn(err); toast('Браузер блокирует звук', 'warn'); });
+}
+el.testDirectBtn.addEventListener('click', playDirectTone);
 
 /* ---------- индикаторы уровня + таймер ---------- */
 const levelBuf = new Uint8Array(2048);
@@ -742,9 +848,35 @@ function tick(){
 
   const pl = currentCallId ? level(preAnalyser) : 0;
   el.peerMeter.style.width = (pl * 100) + '%';
-  if (currentCallId) driveGate(preAnalyser, inGateGain, inGateState, inGateDb, inGateOn);
+  if (currentCallId){
+    driveGate(preAnalyser, inGateGain, inGateState, inGateDb, inGateOn);
+    /* самовосстановление: если гейт «заклинило» закрытым, а звук явно есть */
+    if (inGateGain && inGateState.lastTarget === 0 && pl > Math.pow(10, inGateDb / 20) * 1.5){
+      inGateState.open = true; inGateState.lastTarget = -1;
+    }
+  }
+  if (micActive && micGateGain && micGateState.lastTarget === 0 && ml > Math.pow(10, micGateDb / 20) * 1.5){
+    micGateState.open = true; micGateState.lastTarget = -1;
+  }
 
   if (callStartedAt) el.callTimer.textContent = fmtDur(Date.now() - callStartedAt);
+
+  /* живая диагностика звука */
+  if (currentCallId && el.audioDiag){
+    const parts = [];
+    if (audioCtx){
+      parts.push('ctx: ' + audioCtx.state);
+      parts.push((audioCtx.sampleRate / 1000) + ' кГц');
+      parts.push('вывод: ' + (audioCtx.sinkId || 'системный'));
+    }
+    if (remoteStream){
+      const t = remoteStream.getAudioTracks()[0];
+      if (t) parts.push('трек: ' + t.readyState + (t.muted ? '·MUTE' : ''));
+    }
+    if (remoteAudioEl) parts.push(remoteAudioEl.paused ? 'плеер: пауза' : 'плеер: играет');
+    parts.push('гейт: ' + (inGateState.open ? 'открыт' : (inGateOn ? 'закрыт' : 'выкл')));
+    el.audioDiag.textContent = parts.join(' · ');
+  }
 }
 (function loop(){ tick(); requestAnimationFrame(loop); })();
 /* страховка: в фоновой вкладке rAF замирает, а гейт должен работать */
@@ -1090,6 +1222,7 @@ function showDock(){
   el.callTimer.textContent = '00:00';
   callStartedAt = 0;
   startAudioWatchdog();
+  refreshOutputDevices();
 }
 function hideDock(){ el.dock.hidden = true; }
 
@@ -1102,14 +1235,13 @@ function attachCommon(conn){
     try {
       ensureCtx();
       unlockAudio();
-      /* старое соединение — убрать (актуально при пересоздании трека) */
-      if (remoteSourceNode){ try { remoteSourceNode.disconnect(); } catch (err){} }
-      remoteSourceNode = audioCtx.createMediaStreamSource(stream);
-      remoteSourceNode.connect(volGain);
+      /* поток вешается на постоянный audio-элемент; источник в графе не пересоздаётся */
+      remoteAudioEl.srcObject = stream;
       inGateState.open = false; inGateState.lastTarget = -1;
-      debug('remote подключён к цепочке (AudioContext: ' + audioCtx.state + ')');
+      tryPlayRemote();
+      track.addEventListener('unmute', tryPlayRemote);
       track.addEventListener('mute', () => debug('трек собеседника: mute'));
-      track.addEventListener('unmute', () => debug('трек собеседника: unmute'));
+      debug('remote подключён через audio-элемент (AudioContext: ' + audioCtx.state + ')');
     } catch (err){
       console.warn(err);
       toast('Не удалось подключить звук собеседника', 'err');
@@ -1396,8 +1528,10 @@ function resetCallState(){
   if (dialTimer){ clearTimeout(dialTimer); dialTimer = null; }
   stopRingtone(); stopTitleFlash(); stopAudioWatchdog();
   if (pc){ try { pc.close(); } catch (e){} pc = null; }
-  if (remoteSourceNode){ try { remoteSourceNode.disconnect(); } catch (e){} remoteSourceNode = null; }
+  /* элемент и источник в графе НЕ пересоздаём — только сбрасываем поток */
+  if (remoteAudioEl){ remoteAudioEl.pause(); remoteAudioEl.srcObject = null; }
   if (remoteStream){ remoteStream.getTracks().forEach(t => { try { t.stop(); } catch (e){} }); remoteStream = null; }
+  if (el.audioDiag) el.audioDiag.textContent = '';
   currentCallId = null; peerUid = null; peerNickname = null;
   callStartedAt = 0; callPhase = 'idle'; isCaller = false;
   processedSignals.clear();
