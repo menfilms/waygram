@@ -418,9 +418,9 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
             <label for="micGateSlider">Шумоподавление · исходящее</label>
             <label class="switch" title="Вкл/выкл шумоподавление микрофона"><input type="checkbox" id="micGateToggle" checked><span class="sw-track"></span></label>
           </div>
-          <input type="range" id="micGateSlider" class="range teal" min="-90" max="-10" step="1" value="-50" disabled>
-          <div class="ctl-foot"><span class="hint mono">порог срабатывания</span><span id="micGateVal" class="val teal mono">−50 дБ</span></div>
-          <p class="hint">Глушит ваш фоновый шум ниже порога — именно так вас слышит собеседник. Правее — жёстче.</p>
+          <input type="range" id="micGateSlider" class="range teal" min="0" max="18" step="1" value="6" disabled>
+          <div class="ctl-foot"><span class="hint mono">запас над шумом</span><span id="micGateVal" class="val teal mono">+6 дБ</span></div>
+          <p class="hint">Фон (вентилятор, улица) определяется сам; глушится всё, что тише фона на N дБ. 0 — выключено, 18 — жёстко.</p>
         </div>
       </section>
     </aside>
@@ -516,9 +516,9 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
       <label for="noiseSlider">Шумоподавление · входящее</label>
       <label class="switch" title="Вкл/выкл шумоподавление"><input type="checkbox" id="noiseToggle" checked><span class="sw-track"></span></label>
     </div>
-    <input type="range" id="noiseSlider" class="range teal" min="-90" max="-10" step="1" value="-50">
-    <div class="ctl-foot"><span class="hint mono">порог срабатывания</span><span id="noiseVal" class="val teal mono">−50 дБ</span></div>
-    <p class="hint">Всё, что тише порога (клавиатура, вентилятор), глушится. Правее — жёстче.</p>
+    <input type="range" id="noiseSlider" class="range teal" min="0" max="18" step="1" value="6">
+    <div class="ctl-foot"><span class="hint mono">запас над шумом</span><span id="noiseVal" class="val teal mono">+6 дБ</span></div>
+    <p class="hint">Фон определяется сам; глушится всё, что тише фона на N дБ. 0 — выключено, 18 — жёстко.</p>
   </div>
 
   <div id="audioDiag" class="diag mono"></div>
@@ -601,13 +601,13 @@ let presenceMap = {};
 
 let localStream = null, micSource = null, micActive = false, isMuted = false;
 let audioCtx = null, muteGain = null, micDest = null;
-let micPreAnalyser = null, micGateGain = null, micGateDb = -50, micGateOn = true;
+let micPreAnalyser = null, micGateGain = null, micGateMargin = 6, micGateOn = true;
 let volGain = null, preAnalyser = null, inGateGain = null;
-let inGateDb = -50, inGateOn = true;
+let inGateMargin = 6, inGateOn = true;
 let audioWatchdog = null;
-/* состояние гейтов (гистерезис, как у настоящего noise gate) */
-const micGateState = { open: false, lastTarget: -1 };
-const inGateState  = { open: false, lastTarget: -1 };
+/* состояние гейтов: open/lastTarget + floor (адаптивная оценка фона) + holdUntil */
+const micGateState = { open: false, lastTarget: -1, floor: 0.0001, t: 0, holdUntil: 0 };
+const inGateState  = { open: false, lastTarget: -1, floor: 0.0001, t: 0, holdUntil: 0 };
 
 const MAX_CALL_MEMBERS = 3; /* звонок максимум на троих */
 let currentCallId = null, isCaller = false, callPhase = 'idle';
@@ -656,7 +656,7 @@ function fmtDur(ms){
   const mm = String(m % 60).padStart(2, '0'), ss = String(s % 60).padStart(2, '0');
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
-function fmtDb(v){ return '−' + Math.abs(v) + ' дБ'; }
+function fmtMargin(v){ return v <= 0 ? 'выкл' : '+' + v + ' дБ'; }
 function plural(n, one, few, many){
   const m10 = n % 10, m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return one;
@@ -740,18 +740,36 @@ function unlockAudio(){
 window.addEventListener('pointerdown', unlockAudio, { passive: true });
 window.addEventListener('keydown', unlockAudio);
 
-/* ---------- шумовой гейт: GainNode + анализ уровня с гистерезисом ---------- */
-function driveGate(analyser, gainNode, st, db, on){
+/* ---------- шумовой гейт (адаптивный) ----------
+   Статичный «порог в дБ» не работает: тихий голос и громкий фон лежат
+   в одном диапазоне — такой гейт либо режет голос, либо пропускает шум.
+   Поэтому фон (noise floor) вычисляется автоматически:
+   - вниз оценка опускается быстро (следит за паузами и чистым шумом);
+   - вверх ползёт очень медленно (голос не успевает её задрать).
+   Гейт открывается, когда уровень громче фона на margin дБ (ползунок),
+   и держится открытым ещё 250 мс (hangover), чтобы не «жевать» сло́ва.
+   margin = 0  -> гейт полностью выключен, пропускает всё;
+   margin = 18 -> жёстко, проходит только wyraстная речь. */
+function driveAdaptiveGate(analyser, gainNode, st, marginDb, on){
   if (!analyser || !gainNode || !audioCtx) return;
-  const th = Math.pow(10, db / 20);
   const lvl = level(analyser);
-  if (!st.open && lvl >= th) st.open = true;
-  else if (st.open && lvl < th * 0.4) st.open = false;
-  const target = (!on || st.open) ? 1 : 0.0001;
+  const now = performance.now();
+  const dt = st.t ? Math.min(0.5, (now - st.t) / 1000) : 0.016;
+  st.t = now;
+
+  const coeff = lvl < st.floor ? (1 - Math.exp(-dt / 0.15)) : (1 - Math.exp(-dt / 6));
+  st.floor += (lvl - st.floor) * coeff;
+  if (st.floor < 0.00005) st.floor = 0.00005;
+
+  const openTh = st.floor * Math.pow(10, marginDb / 20);
+  if (!st.open && lvl >= openTh){ st.open = true; st.holdUntil = now + 250; }
+  else if (st.open && lvl < openTh * 0.5 && now > st.holdUntil) st.open = false;
+
+  const target = (!on || marginDb <= 0 || st.open) ? 1 : 0.0001;
   if (st.lastTarget !== target){
     st.lastTarget = target;
-    /* открывается быстро (8 мс), закрывается плавно (60 мс) */
-    gainNode.gain.setTargetAtTime(target, audioCtx.currentTime, target > 0.5 ? 0.008 : 0.06);
+    /* открывается быстро (10 мс), закрывается плавно (80 мс) */
+    gainNode.gain.setTargetAtTime(target, audioCtx.currentTime, target > 0.5 ? 0.01 : 0.08);
   }
 }
 
@@ -877,20 +895,11 @@ function level(analyser){
 function tick(){
   const ml = micActive ? level(micPreAnalyser) : 0;
   el.micMeter.style.width = (ml * 100) + '%';
-  if (micActive) driveGate(micPreAnalyser, micGateGain, micGateState, micGateDb, micGateOn);
+  if (micActive) driveAdaptiveGate(micPreAnalyser, micGateGain, micGateState, micGateMargin, micGateOn);
 
   const pl = currentCallId ? level(preAnalyser) : 0;
   el.peerMeter.style.width = (pl * 100) + '%';
-  if (currentCallId){
-    driveGate(preAnalyser, inGateGain, inGateState, inGateDb, inGateOn);
-    /* самовосстановление: если гейт «заклинило» закрытым, а звук явно есть */
-    if (inGateGain && inGateState.lastTarget === 0 && pl > Math.pow(10, inGateDb / 20) * 1.5){
-      inGateState.open = true; inGateState.lastTarget = -1;
-    }
-  }
-  if (micActive && micGateGain && micGateState.lastTarget === 0 && ml > Math.pow(10, micGateDb / 20) * 1.5){
-    micGateState.open = true; micGateState.lastTarget = -1;
-  }
+  if (currentCallId) driveAdaptiveGate(preAnalyser, inGateGain, inGateState, inGateMargin, inGateOn);
 
   if (callStartedAt) el.callTimer.textContent = fmtDur(Date.now() - callStartedAt);
 
@@ -906,7 +915,7 @@ function tick(){
     if (rt) parts.push('трек: ' + rt.readyState + (rt.muted ? '·MUTE' : ''));
     parts.push('в звонке: ' + Object.keys(callMembers).length);
     if (remoteAudioEl) parts.push(remoteAudioEl.paused ? 'плеер: пауза' : 'плеер: играет');
-    parts.push('гейт: ' + (inGateState.open ? 'открыт' : (inGateOn ? 'закрыт' : 'выкл')));
+    parts.push('гейт: ' + (inGateMargin <= 0 || !inGateOn ? 'выкл' : (inGateState.open ? 'открыт' : 'закрыт')) + ' · фон ' + (inGateState.floor * 100).toFixed(2) + '%');
     el.audioDiag.textContent = parts.join(' · ');
   }
 }
@@ -1117,7 +1126,7 @@ async function enableMic(deviceId){
   if (micSource) { try { micSource.disconnect(); } catch (e){} }
   micSource = audioCtx.createMediaStreamSource(stream);
   micSource.connect(micPreAnalyser);
-  micGateState.open = false; micGateState.lastTarget = -1;
+  micGateState.open = false; micGateState.lastTarget = -1; micGateState.t = 0;
 
   micActive = true;
   el.micBtn.disabled = true;
@@ -1192,8 +1201,8 @@ applyMuteUI();
 
 /* ползунки шумоподавления микрофона */
 el.micGateSlider.addEventListener('input', () => {
-  micGateDb = +el.micGateSlider.value;
-  el.micGateVal.textContent = fmtDb(micGateDb);
+  micGateMargin = +el.micGateSlider.value;
+  el.micGateVal.textContent = fmtMargin(micGateMargin);
   fillSlider(el.micGateSlider);
   micGateState.lastTarget = -1; /* применить сразу */
 });
@@ -1209,17 +1218,19 @@ el.volSlider.addEventListener('input', () => {
   const v = +el.volSlider.value;
   el.volVal.textContent = v + '%';
   fillSlider(el.volSlider);
-  if (volGain) volGain.gain.setTargetAtTime(v / 100, audioCtx.currentTime, 0.03);
+  if (volGain) volGain.gain.value = v / 100; /* прямое присваивание — без автоматизаций */
+  console.log('[waygram] громкость приёма: ' + v + '%');
 });
 el.volSlider.addEventListener('dblclick', () => {
   el.volSlider.value = 100;
   el.volSlider.dispatchEvent(new Event('input'));
 });
 el.noiseSlider.addEventListener('input', () => {
-  inGateDb = +el.noiseSlider.value;
-  el.noiseVal.textContent = fmtDb(inGateDb);
+  inGateMargin = +el.noiseSlider.value;
+  el.noiseVal.textContent = fmtMargin(inGateMargin);
   fillSlider(el.noiseSlider);
   inGateState.lastTarget = -1; /* применить сразу */
+  console.log('[waygram] запас шумодава (приём): ' + fmtMargin(inGateMargin));
 });
 el.noiseSlider.addEventListener('dblclick', () => {
   el.noiseSlider.value = -50;
@@ -1369,7 +1380,7 @@ function rebuildMixed(){
     return;
   }
   remoteAudioEl.srcObject = new MediaStream(tracks);
-  inGateState.open = false; inGateState.lastTarget = -1;
+  inGateState.open = false; inGateState.lastTarget = -1; inGateState.t = 0;
   tryPlayRemote();
   debug('в миксе ' + tracks.length + ' трек(а), AudioContext: ' + audioCtx.state);
 }
