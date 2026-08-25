@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b1220;
+  --color-panel: #121d33;
+  --color-raised: #16233d;
+  --color-fog: #8ca3c7;
+  --color-dim: #5f7499;
+  --color-snow: #e9f0ff;
+  --color-amber: #ffb454;
+  --color-ember: #f59231;
+  --color-mint: #4fd6be;
+  --color-coral: #ff5d5d;
+  --font-display: "Unbounded", sans-serif;
+  --font-body: "Golos Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html {
+  scrollbar-color: #2a3b60 #0b1220;
+}
+
+body {
+  background: #0b1220;
+  color: #e9f0ff;
+  font-family: "Golos Text", system-ui, sans-serif;
+}
+
+@keyframes eq {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1.15);
+  }
+}
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dotPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(92, 224, 137, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(92, 224, 137, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(92, 224, 137, 0);
+  }
+}
+@keyframes ringPulse {
+  from {
+    transform: scale(0.75);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+@keyframes driftSlow {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(60px, 40px);
+  }
+}
+
+.anim-rise {
+  animation: riseIn 0.65s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
