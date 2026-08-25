@@ -198,8 +198,10 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
 .ctl-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
 .ctl-head label{font-size:.86rem;font-weight:600}
 .ctl-foot{display:flex;justify-content:space-between;align-items:baseline;margin-top:-2px}
-.val{font-size:.8rem;color:var(--amber);font-weight:600}
+.val{display:inline-block;font-size:.8rem;color:var(--amber);font-weight:600}
 .val.teal{color:var(--teal)}
+.val.bump{animation:valBump .25s ease}
+@keyframes valBump{40%{transform:scale(1.3)}}
 .ctl .hint{margin-top:5px;line-height:1.4}
 
 /* чат */
@@ -663,11 +665,11 @@ function ensureCtx(){
   remoteAudioEl = document.createElement('audio');
   remoteAudioEl.autoplay = true;
   remoteAudioEl.setAttribute('playsinline', '');
-  remoteAudioEl.volume = 1;
+  remoteAudioEl.volume = Math.min(1, +el.volSlider.value / 100);
   remoteAudioEl.muted = false;
   elSourceNode = audioCtx.createMediaElementSource(remoteAudioEl);
   volGain = audioCtx.createGain();
-  volGain.gain.value = +el.volSlider.value / 100;
+  volGain.gain.value = +el.volSlider.value > 100 ? +el.volSlider.value / 100 : 1;
   preAnalyser = audioCtx.createAnalyser();
   preAnalyser.fftSize = 1024;
   inGateGain = audioCtx.createGain();
@@ -1173,16 +1175,28 @@ el.micGateToggle.addEventListener('change', () => {
 /* ================================================================
    ПОЛЗУНКИ ПРИЁМА (громкость + шумоподавление входящего звука)
    ================================================================ */
-el.volSlider.addEventListener('input', () => {
+/* Громкость идёт по двум независимым путям сразу, чтобы ползунок
+   работал гарантированно:
+   0–100%   — громкость самого audio-элемента (применяется ДО графа,
+              работает даже если в Web Audio что-то пошло не так);
+   100–200% — дополнительное усиление через GainNode. */
+function applyVolume(){
   const v = +el.volSlider.value;
   el.volVal.textContent = v + '%';
+  el.volVal.classList.remove('bump'); void el.volVal.offsetWidth; el.volVal.classList.add('bump');
   fillSlider(el.volSlider);
-  if (volGain) volGain.gain.setTargetAtTime(v / 100, audioCtx.currentTime, 0.03);
-});
-el.volSlider.addEventListener('dblclick', () => {
-  el.volSlider.value = 100;
-  el.volSlider.dispatchEvent(new Event('input'));
-});
+  if (remoteAudioEl) remoteAudioEl.volume = Math.min(1, v / 100);
+  if (volGain){
+    const g = v > 100 ? v / 100 : 1;
+    volGain.gain.value = g;
+    if (audioCtx && audioCtx.state === 'running'){
+      volGain.gain.setTargetAtTime(g, audioCtx.currentTime, 0.02);
+    }
+  }
+  console.log('[waygram] громкость приёма: ' + v + '% (элемент ' + Math.round(Math.min(1, v / 100) * 100) + '%, усиление ×' + (v > 100 ? (v / 100).toFixed(2) : '1') + ')');
+}
+el.volSlider.addEventListener('input', applyVolume);
+el.volSlider.addEventListener('dblclick', () => { el.volSlider.value = 100; applyVolume(); });
 el.noiseSlider.addEventListener('input', () => {
   inGateDb = +el.noiseSlider.value;
   el.noiseVal.textContent = fmtDb(inGateDb);
