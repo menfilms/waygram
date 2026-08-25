@@ -532,12 +532,13 @@ let presenceMap = {};
 let localStream = null, micSource = null, micActive = false, isMuted = false;
 let audioCtx = null, muteGain = null, micAnalyser = null, micDest = null;
 let micGate = null, micGateDb = -50, micGateOn = true;
-let remoteAudioEl = null, volGain = null, inGate = null, inAnalyser = null;
+let volGain = null, inGate = null, inAnalyser = null;
 let inGateDb = -50, inGateOn = true;
 
 let pc = null, currentCallId = null, isCaller = false, callPhase = 'idle';
 let peerNickname = null, peerUid = null, callStartedAt = 0, dialTimer = null;
 let pendingIncoming = null, shownIncomingId = null;
+let remoteSourceNode = null, remoteStream = null;
 const processedSignals = new Set();
 const pendingCandidates = [];
 const busyReplied = new Set();
@@ -591,9 +592,12 @@ function fillSlider(input){
 }
 
 /* ================================================================
-   ШУМОПОДАВЛЯТЕЛЬ (noise gate) — AudioWorklet + запасной вариант
+   ШУМОПОДАВЛЯТЕЛЬ (noise gate) — AudioWorklet + запасной вариант.
+   Каждый гейт регистрируется под УНИКАЛЬНЫМ именем процессора,
+   поэтому повторная регистрация невозможна (ошибка
+   "already registered" исключена).
    ================================================================ */
-const GATE_WORKLET = [
+const GATE_WORKLET_TEMPLATE = [
 'class WGNoiseGate extends AudioWorkletProcessor {',
 '  constructor(){',
 '    super();',
@@ -623,24 +627,31 @@ const GATE_WORKLET = [
 '    return true;',
 '  }',
 '}',
-'registerProcessor("wg-noise-gate", WGNoiseGate);'
+'registerProcessor("__GATE_NAME__", WGNoiseGate);'
 ].join('\n');
 
+let gateSeq = 0;
 async function createNoiseGate(ctx){
+  const name = 'wg-noise-gate-' + (++gateSeq);
   if (ctx.audioWorklet){
     try {
-      const url = URL.createObjectURL(new Blob([GATE_WORKLET], { type: 'application/javascript' }));
+      const src = GATE_WORKLET_TEMPLATE.replace('__GATE_NAME__', name);
+      const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
       await ctx.audioWorklet.addModule(url);
       URL.revokeObjectURL(url);
-      const node = new AudioWorkletNode(ctx, 'wg-noise-gate');
+      const node = new AudioWorkletNode(ctx, name, {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2]
+      });
       return {
-        input: node, output: node,
+        kind: 'worklet', input: node, output: node,
         setThreshold: db => node.port.postMessage({ threshold: db }),
         setEnabled:   b  => node.port.postMessage({ enabled: b })
       };
     } catch (err){ console.warn('AudioWorklet недоступен, использую запасной гейт', err); }
   }
-  /* запасной вариант: ScriptProcessor */
+  /* запасной вариант: ScriptProcessor.
+     ВАЖНО: вешаем его выход ещё и на destination через нулевую громкость,
+     иначе браузер может не обрабатывать процессор вообще. */
   const sp = ctx.createScriptProcessor(2048, 1, 1);
   const st = { open: false, gain: 1, thresholdDb: -50, enabled: true };
   sp.onaudioprocess = (e) => {
@@ -659,47 +670,37 @@ async function createNoiseGate(ctx){
       outp[i] = inp[i] * st.gain;
     }
   };
+  const silencer = ctx.createGain();
+  silencer.gain.value = 0;
+  sp.connect(silencer);
+  silencer.connect(ctx.destination);
   return {
-    input: sp, output: sp,
+    kind: 'scriptprocessor', input: sp, output: sp,
     setThreshold: db => { st.thresholdDb = db; },
     setEnabled:   b  => { st.enabled = b; }
   };
 }
 
 /* ================================================================
-   АУДИО-ЦЕПОЧКА (создаётся один раз по жесту пользователя)
-   приём:  remoteAudio -> volGain -> [шумовой гейт] -> inAnalyser -> колонки
-   микрофон: mic -> [шумовой гейт] -> muteGain -> micAnalyser -> micDest (в звонок)
+   АУДИО-ЦЕПОЧКА. База создаётся синхронно, гейты — асинхронно,
+   но цепочка ПРИЁМА всегда собрана ДО первого ontrack.
+   приём:   remoteStream -> MediaStreamSource -> volGain -> [гейт] -> inAnalyser -> колонки
+   микрофон: mic -> [гейт] -> muteGain -> micAnalyser -> micDest (в звонок)
+   Никаких <audio>-элементов: remote-поток идёт в граф напрямую,
+   поэтому нет проблем с autoplay и MediaElementSource.
    ================================================================ */
-function ensureAudio(){
+function ensureCtx(){
   if (audioCtx) return audioCtx;
   const AC = window.AudioContext || window.webkitAudioContext;
   audioCtx = new AC();
 
-  /* --- приём --- */
-  remoteAudioEl = new Audio();
-  remoteAudioEl.autoplay = true;
-  const elSource = audioCtx.createMediaElementSource(remoteAudioEl);
+  /* --- узлы приёма --- */
   volGain = audioCtx.createGain();
   volGain.gain.value = +el.volSlider.value / 100;
   inAnalyser = audioCtx.createAnalyser();
   inAnalyser.fftSize = 1024;
-  elSource.connect(volGain);
-  volGain.connect(inAnalyser);
-  inAnalyser.connect(audioCtx.destination);
-  /* гейт подставляется асинхронно, чтобы звук не ждал загрузки ворклета */
-  createNoiseGate(audioCtx).then(g => {
-    inGate = g;
-    g.setThreshold(inGateDb); g.setEnabled(inGateOn);
-    try {
-      volGain.disconnect();
-      volGain.connect(g.input);
-      g.output.connect(inAnalyser);
-      debug('входящий шумовой гейт подключён');
-    } catch (err){ console.warn(err); }
-  });
 
-  /* --- микрофон (общий для звонков) --- */
+  /* --- узлы микрофона (общие для всех звонков) --- */
   muteGain = audioCtx.createGain();
   muteGain.gain.value = isMuted ? 0 : 1;
   micAnalyser = audioCtx.createAnalyser();
@@ -708,13 +709,46 @@ function ensureAudio(){
   muteGain.connect(micAnalyser);
   micAnalyser.connect(micDest);
 
-  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   return audioCtx;
 }
-window.addEventListener('pointerdown', () => {
-  ensureAudio();
+
+let chainReady = null;
+function ensureAudioChain(){
+  ensureCtx();
+  if (!chainReady){
+    chainReady = (async () => {
+      /* сначала звук идёт напрямую, чтобы не ждать ворклет */
+      volGain.connect(inAnalyser);
+      inAnalyser.connect(audioCtx.destination);
+      const g = await createNoiseGate(audioCtx);
+      inGate = g;
+      g.setThreshold(inGateDb);
+      g.setEnabled(inGateOn);
+      try {
+        volGain.disconnect();
+        volGain.connect(g.input);
+        g.output.connect(inAnalyser);
+        debug('шумовой гейт приёма подключён (' + g.kind + ')');
+      } catch (err){
+        console.warn(err);
+        try { volGain.disconnect(); } catch (e2){}
+        try { volGain.connect(inAnalyser); } catch (e2){}
+      }
+    })().catch(err => {
+      console.warn('ошибка сборки аудиоцепочки', err);
+      chainReady = null; /* разрешить повторную попытку */
+    });
+  }
+  return chainReady;
+}
+
+function unlockAudio(){
+  ensureCtx();
   if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-}, { passive: true });
+  ensureAudioChain();
+}
+window.addEventListener('pointerdown', unlockAudio, { passive: true });
+window.addEventListener('keydown', unlockAudio);
 
 /* ---------- индикаторы уровня + таймер ---------- */
 const levelBuf = new Uint8Array(2048);
@@ -914,7 +948,7 @@ el.sendForm.addEventListener('submit', async (e) => {
    МИКРОФОН
    ================================================================ */
 async function enableMic(deviceId){
-  ensureAudio();
+  await ensureAudioChain();
   await audioCtx.resume().catch(() => {});
   const constraints = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
   if (deviceId) constraints.audio.deviceId = { exact: deviceId };
@@ -1081,17 +1115,22 @@ function showDock(){
 function hideDock(){ el.dock.hidden = true; }
 
 function attachCommon(conn){
-  conn.ontrack = (e) => {
+  conn.ontrack = async (e) => {
     debug('получен аудиопоток собеседника');
     const stream = e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]);
-    remoteAudioEl.srcObject = stream;
-    remoteAudioEl.play()
-      .then(() => debug('воспроизведение началось'))
-      .catch(() => {
-        debug('кликните по странице, чтобы включить звук');
-        toast('Браузер заблокировал автовоспроизведение — кликните по странице', 'warn');
-        document.body.addEventListener('pointerdown', () => remoteAudioEl.play().catch(() => {}), { once: true });
-      });
+    remoteStream = stream;
+    try {
+      await ensureAudioChain();
+      unlockAudio();
+      /* старое соединение — убрать (актуально при пересоздании трека) */
+      if (remoteSourceNode){ try { remoteSourceNode.disconnect(); } catch (err){} }
+      remoteSourceNode = audioCtx.createMediaStreamSource(stream);
+      remoteSourceNode.connect(volGain);
+      debug('remote-поток подключён к аудиоцепочке');
+    } catch (err){
+      console.warn(err);
+      toast('Не удалось подключить звук собеседника', 'err');
+    }
   };
   conn.onicecandidate = (e) => {
     if (e.candidate && currentCallId && peerUid){
@@ -1255,7 +1294,7 @@ let titleFlash = null;
 let ringNodes = null;
 
 function startRingtone(){
-  ensureAudio();
+  ensureCtx();
   if (ringNodes) return;
   audioCtx.resume().catch(() => {});
   const g = audioCtx.createGain(); g.gain.value = 0; g.connect(audioCtx.destination);
@@ -1312,7 +1351,16 @@ el.acceptBtn.addEventListener('click', async () => {
     /* микрофон включаем автоматически прямо здесь — жест есть */
     if (!micActive){
       try { await enableMic(); }
-      catch (e){ toast('Нужен доступ к микрофону, чтобы ответить', 'err'); return; }
+      catch (e){
+        toast('Нужен доступ к микрофону, чтобы ответить', 'err');
+        /* сообщаем звонящему, что звонок не принят */
+        try {
+          await pushSignal({ type: 'reject', from: currentUser.uid, to: pendingIncoming.call.caller }, pendingIncoming.callId);
+          await remove(ref(rtdb, `calls/${pendingIncoming.callId}`));
+        } catch (err){}
+        hideIncoming();
+        return;
+      }
     }
     /* звонящий мог отменить за мгновение до этого */
     const check = await get(ref(rtdb, `calls/${pendingIncoming.callId}`));
@@ -1365,7 +1413,8 @@ function resetCallState(){
   if (dialTimer){ clearTimeout(dialTimer); dialTimer = null; }
   stopRingtone(); stopTitleFlash();
   if (pc){ try { pc.close(); } catch (e){} pc = null; }
-  if (remoteAudioEl){ remoteAudioEl.pause(); remoteAudioEl.srcObject = null; }
+  if (remoteSourceNode){ try { remoteSourceNode.disconnect(); } catch (e){} remoteSourceNode = null; }
+  if (remoteStream){ remoteStream.getTracks().forEach(t => { try { t.stop(); } catch (e){} }); remoteStream = null; }
   currentCallId = null; peerUid = null; peerNickname = null;
   callStartedAt = 0; callPhase = 'idle'; isCaller = false;
   processedSignals.clear();
