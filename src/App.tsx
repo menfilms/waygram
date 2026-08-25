@@ -62,6 +62,11 @@ const FIXES: Fix[] = [
     before: "Текст сообщений вставлялся через innerHTML — любой мог вставить HTML/скрипт в чат.",
     after: "Все сообщения рендерятся через textContent. Плюс ограничение чата последними 200 сообщениями и автопрокрутка только когда вы внизу.",
   },
+  {
+    title: "Групповые звонки до 3 человек",
+    before: "Только 1-на-1: один offer/answer на весь звонок и никаких способов позвать третьего.",
+    after: "Mesh-схема: каждый участник соединён напрямую с каждым, приглашённый сам дозванивается до всех в звонке. Панель участников с живыми статусами, кнопка «Позвать» с выбором из тех, кто в сети, все треки микшируются — громкость и шумка работают как раньше.",
+  },
 ];
 
 const STEPS: { n: string; text: ReactNode }[] = [
@@ -104,6 +109,25 @@ function DockMock() {
           <p className="font-mono text-[11px] text-[#5CE089]">В эфире</p>
         </div>
         <span className="font-mono text-sm text-amber">04:12</span>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber/40 bg-[#0b1220] py-0.5 pl-0.5 pr-2.5 text-[11px] font-semibold">
+          <span className="grid h-5 w-5 place-items-center rounded-full bg-gradient-to-br from-[hsl(30_72%_58%)] to-[hsl(75_70%_42%)] text-[9px] text-ink">В</span>
+          Вы
+          <span className="h-1.5 w-1.5 rounded-full bg-[#5CE089] shadow-[0_0_6px_rgba(92,224,137,.8)]" />
+        </span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-[#0b1220] py-0.5 pl-0.5 pr-2.5 text-[11px] font-semibold text-snow/85">
+          <span className="grid h-5 w-5 place-items-center rounded-full bg-gradient-to-br from-[hsl(160_72%_48%)] to-[hsl(205_70%_42%)] text-[9px] text-ink">С</span>
+          СонныйЁж
+          <span className="h-1.5 w-1.5 rounded-full bg-[#5CE089] shadow-[0_0_6px_rgba(92,224,137,.8)]" />
+        </span>
+        <span className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-dashed border-mint/50 px-2.5 py-1 text-[11px] font-semibold text-mint transition-colors hover:bg-mint/10">
+          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Позвать
+        </span>
       </div>
 
       <div className="mb-1 flex items-center gap-2">
@@ -169,7 +193,7 @@ export default function App() {
           <div>
             <p className="anim-rise mb-4 inline-flex items-center gap-2 rounded-full border border-mint/40 bg-mint/10 px-3.5 py-1.5 font-mono text-xs text-mint">
               <span className="h-2 w-2 rounded-full bg-[#5CE089]" style={{ animation: "dotPulse 2s infinite" }} />
-              починено · ползунки · шумка · звонки
+              починено · шумка · звонки · до 3 человек
             </p>
             <h1 className="anim-rise font-display text-3xl font-extrabold leading-tight sm:text-5xl" style={{ animationDelay: ".08s" }}>
               Waygram снова <span className="text-amber">в эфире</span>

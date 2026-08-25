@@ -198,10 +198,8 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
 .ctl-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
 .ctl-head label{font-size:.86rem;font-weight:600}
 .ctl-foot{display:flex;justify-content:space-between;align-items:baseline;margin-top:-2px}
-.val{display:inline-block;font-size:.8rem;color:var(--amber);font-weight:600}
+.val{font-size:.8rem;color:var(--amber);font-weight:600}
 .val.teal{color:var(--teal)}
-.val.bump{animation:valBump .25s ease}
-@keyframes valBump{40%{transform:scale(1.3)}}
 .ctl .hint{margin-top:5px;line-height:1.4}
 
 /* чат */
@@ -275,6 +273,29 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
 .out-row label{font-size:.8rem;color:var(--muted);white-space:nowrap}
 .out-row select{flex:1;font-size:.82rem;padding:8px 32px 8px 10px;background-position:right 9px center}
 .diag{margin-top:12px;font-size:.64rem;color:var(--dim);line-height:1.6;min-height:1em}
+
+/* участники звонка */
+.participants{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 13px}
+.p-chip{display:inline-flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;border:1px solid var(--line);border-radius:99px;background:var(--bg1);font-family:var(--font-body);font-size:.8rem;font-weight:600;color:var(--text);animation:msgIn .25s both}
+.p-chip .avatar{width:24px;height:24px;font-size:.66rem}
+.p-chip.me{border-color:rgba(255,180,84,.45)}
+.p-dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+.p-dot.ok{background:var(--green);box-shadow:0 0 7px rgba(92,224,137,.7)}
+.p-dot.wait{background:var(--amber);animation:pulse 1.6s infinite}
+.p-chip.add{border-style:dashed;border-color:rgba(79,214,190,.5);color:var(--teal);background:transparent;cursor:pointer;padding:7px 12px;transition:background .2s,transform .15s,border-color .2s}
+.p-chip.add:hover{background:rgba(79,214,190,.12);transform:translateY(-1px);border-color:var(--teal)}
+.p-chip.add svg{width:13px;height:13px}
+/* панель приглашения */
+.invite-panel{border:1px solid rgba(79,214,190,.35);border-radius:var(--r-sm);background:var(--bg1);padding:11px;margin-bottom:13px;animation:msgIn .2s both}
+.invite-panel-head{display:flex;justify-content:space-between;align-items:center;font-size:.76rem;color:var(--muted);margin-bottom:9px}
+.invite-panel-head b{color:var(--teal)}
+.invite-list{display:flex;flex-direction:column;gap:6px;max-height:170px;overflow-y:auto}
+.inv-row{display:flex;align-items:center;gap:9px;padding:6px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--bg2);transition:border-color .2s}
+.inv-row:hover{border-color:rgba(79,214,190,.4)}
+.inv-row .avatar{width:26px;height:26px;font-size:.68rem}
+.inv-name{font-weight:600;font-size:.85rem}
+.inv-state{font-size:.68rem;color:var(--dim);margin-left:auto;margin-right:4px;font-family:var(--font-mono)}
+.invite-info{font-size:.85rem;color:var(--muted);margin:-16px 0 24px;line-height:1.45}
 
 /* тосты */
 .toasts{position:fixed;top:18px;right:18px;z-index:80;display:flex;flex-direction:column;gap:10px;max-width:min(340px,calc(100vw - 30px))}
@@ -429,8 +450,9 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
 <div id="incomingModal" class="modal" hidden>
   <div class="modal-card">
     <div class="pulse-ring"><span id="inAvatar" class="avatar lg"></span></div>
-    <p class="call-label mono">Входящий звонок</p>
+    <p id="callLabel" class="call-label mono">Входящий звонок</p>
     <h2 id="callerName" class="display">…</h2>
+    <p id="inviteInfo" class="invite-info" hidden></p>
     <div class="modal-btns">
       <button id="acceptBtn" class="call-btn accept">
         <span class="cb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 1.9z"/></svg></span>
@@ -453,6 +475,16 @@ input[type=range].teal::-moz-range-thumb{border-color:var(--teal)}
       <span id="callStatusText" class="status mono">Соединение…</span>
     </div>
     <span id="callTimer" class="mono timer">00:00</span>
+  </div>
+
+  <div id="participants" class="participants"></div>
+
+  <div id="invitePanel" class="invite-panel" hidden>
+    <div class="invite-panel-head">
+      <span>Кого позвать? · свободно мест: <b id="inviteSeats">1</b></span>
+      <button id="inviteCloseBtn" class="linklike" type="button">закрыть</button>
+    </div>
+    <div id="inviteList" class="invite-list"></div>
   </div>
 
   <button id="soundHint" class="sound-hint" hidden>
@@ -553,6 +585,9 @@ const el = {
   dockMuteBtn: $('dockMuteBtn'), hangupBtn: $('hangupBtn'),
   soundHint: $('soundHint'), testToneBtn: $('testToneBtn'), testDirectBtn: $('testDirectBtn'),
   outRow: $('outRow'), outSelect: $('outSelect'), audioDiag: $('audioDiag'),
+  participants: $('participants'), invitePanel: $('invitePanel'), inviteList: $('inviteList'),
+  inviteCloseBtn: $('inviteCloseBtn'), inviteSeats: $('inviteSeats'),
+  callLabel: $('callLabel'), inviteInfo: $('inviteInfo'),
   toasts: $('toasts')
 };
 
@@ -574,13 +609,20 @@ let audioWatchdog = null;
 const micGateState = { open: false, lastTarget: -1 };
 const inGateState  = { open: false, lastTarget: -1 };
 
-let pc = null, currentCallId = null, isCaller = false, callPhase = 'idle';
-let peerNickname = null, peerUid = null, callStartedAt = 0, dialTimer = null;
+const MAX_CALL_MEMBERS = 3; /* звонок максимум на троих */
+let currentCallId = null, isCaller = false, callPhase = 'idle';
+let callStartedAt = 0, dialTimer = null;
 let pendingIncoming = null, shownIncomingId = null;
-let remoteAudioEl = null, elSourceNode = null, remoteStream = null;
+let remoteAudioEl = null, elSourceNode = null;
 let outputsFilled = false;
+const pcs = {};                /* uid участника -> RTCPeerConnection (mesh) */
+const remoteTracks = {};       /* uid участника -> его аудиотрек */
+let callMembers = {};          /* uid -> { nickname } */
+let membersUnsub = null, membersInitialized = false;
+let pendingInvite = null, invitePanelOpen = false;
 const processedSignals = new Set();
-const pendingCandidates = [];
+const pendingCandidates = {};  /* uid -> [RTCIceCandidate], пришедшие раньше answer */
+const pendingOffers = {};      /* callId_fromUid -> sdp offer'а */
 const busyReplied = new Set();
 let tearingDown = false;
 
@@ -632,17 +674,6 @@ function fillSlider(input){
 }
 
 /* ================================================================
-   АУДИО-ЦЕПОЧКА. Собирается СИНХРОННО из нативных узлов Web Audio —
-   без AudioWorklet и ScriptProcessor (именно они давали ошибки в
-   консоли и могли рвать звук в тишину).
-   приём:    remoteStream -> MediaStreamSource -> volGain ->
-             preAnalyser -> inGateGain(GainNode) -> колонки
-   микрофон: mic -> micPreAnalyser -> micGateGain(GainNode) ->
-             muteGain -> micDest (уходит в звонок)
-   Шумоподавление = GainNode, которым управляет анализ уровня звука
-   (rAF + страховочный интервал, чтобы работало и в фоновой вкладке).
-   ================================================================ */
-/* ================================================================
    АУДИО-ЦЕПОЧКА. Воспроизведение идёт через настоящий <audio>-элемент
    (так звук стабильно играет во всех браузерах: элемент сам
    «будит» дорожки потока), а элемент подключён в Web Audio граф
@@ -665,11 +696,11 @@ function ensureCtx(){
   remoteAudioEl = document.createElement('audio');
   remoteAudioEl.autoplay = true;
   remoteAudioEl.setAttribute('playsinline', '');
-  remoteAudioEl.volume = Math.min(1, +el.volSlider.value / 100);
+  remoteAudioEl.volume = 1;
   remoteAudioEl.muted = false;
   elSourceNode = audioCtx.createMediaElementSource(remoteAudioEl);
   volGain = audioCtx.createGain();
-  volGain.gain.value = +el.volSlider.value > 100 ? +el.volSlider.value / 100 : 1;
+  volGain.gain.value = +el.volSlider.value / 100;
   preAnalyser = audioCtx.createAnalyser();
   preAnalyser.fftSize = 1024;
   inGateGain = audioCtx.createGain();
@@ -871,10 +902,9 @@ function tick(){
       parts.push((audioCtx.sampleRate / 1000) + ' кГц');
       parts.push('вывод: ' + (audioCtx.sinkId || 'системный'));
     }
-    if (remoteStream){
-      const t = remoteStream.getAudioTracks()[0];
-      if (t) parts.push('трек: ' + t.readyState + (t.muted ? '·MUTE' : ''));
-    }
+    const rt = Object.values(remoteTracks)[0];
+    if (rt) parts.push('трек: ' + rt.readyState + (rt.muted ? '·MUTE' : ''));
+    parts.push('в звонке: ' + Object.keys(callMembers).length);
     if (remoteAudioEl) parts.push(remoteAudioEl.paused ? 'плеер: пауза' : 'плеер: играет');
     parts.push('гейт: ' + (inGateState.open ? 'открыт' : (inGateOn ? 'закрыт' : 'выкл')));
     el.audioDiag.textContent = parts.join(' · ');
@@ -1175,28 +1205,16 @@ el.micGateToggle.addEventListener('change', () => {
 /* ================================================================
    ПОЛЗУНКИ ПРИЁМА (громкость + шумоподавление входящего звука)
    ================================================================ */
-/* Громкость идёт по двум независимым путям сразу, чтобы ползунок
-   работал гарантированно:
-   0–100%   — громкость самого audio-элемента (применяется ДО графа,
-              работает даже если в Web Audio что-то пошло не так);
-   100–200% — дополнительное усиление через GainNode. */
-function applyVolume(){
+el.volSlider.addEventListener('input', () => {
   const v = +el.volSlider.value;
   el.volVal.textContent = v + '%';
-  el.volVal.classList.remove('bump'); void el.volVal.offsetWidth; el.volVal.classList.add('bump');
   fillSlider(el.volSlider);
-  if (remoteAudioEl) remoteAudioEl.volume = Math.min(1, v / 100);
-  if (volGain){
-    const g = v > 100 ? v / 100 : 1;
-    volGain.gain.value = g;
-    if (audioCtx && audioCtx.state === 'running'){
-      volGain.gain.setTargetAtTime(g, audioCtx.currentTime, 0.02);
-    }
-  }
-  console.log('[waygram] громкость приёма: ' + v + '% (элемент ' + Math.round(Math.min(1, v / 100) * 100) + '%, усиление ×' + (v > 100 ? (v / 100).toFixed(2) : '1') + ')');
-}
-el.volSlider.addEventListener('input', applyVolume);
-el.volSlider.addEventListener('dblclick', () => { el.volSlider.value = 100; applyVolume(); });
+  if (volGain) volGain.gain.setTargetAtTime(v / 100, audioCtx.currentTime, 0.03);
+});
+el.volSlider.addEventListener('dblclick', () => {
+  el.volSlider.value = 100;
+  el.volSlider.dispatchEvent(new Event('input'));
+});
 el.noiseSlider.addEventListener('input', () => {
   inGateDb = +el.noiseSlider.value;
   el.noiseVal.textContent = fmtDb(inGateDb);
@@ -1231,59 +1249,263 @@ function setPhase(phase){
 }
 function showDock(){
   el.dock.hidden = false;
-  el.peerName.textContent = peerNickname || 'Собеседник';
-  paintAvatar(el.peerAvatar, peerNickname);
+  el.peerName.textContent = 'Собеседник';
+  paintAvatar(el.peerAvatar, myNickname);
   el.callTimer.textContent = '00:00';
   callStartedAt = 0;
+  closeInvitePanel();
   startAudioWatchdog();
   refreshOutputDevices();
 }
 function hideDock(){ el.dock.hidden = true; }
 
-function attachCommon(conn){
+/* ================================================================
+   ГРУППОВОЙ ЗВОНОК (до 3 человек) по mesh-схеме: каждый участник
+   держит прямое WebRTC-соединение с каждым. Все удалённые треки
+   микшируются в один MediaStream и играют через тот же audio-элемент,
+   поэтому громкость/шумоподавление работают как раньше.
+   ================================================================ */
+function addMyTrack(conn){
+  const track = micDest && micDest.stream.getAudioTracks()[0];
+  if (track) conn.addTrack(track, micDest.stream);
+}
+function nickOf(uid){
+  return (callMembers[uid] && callMembers[uid].nickname) || 'Собеседник';
+}
+
+function attachCommon(conn, peerId){
   conn.ontrack = (e) => {
-    const stream = e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]);
-    const track = e.track;
-    debug('получен аудиопоток (track: ' + track.readyState + ', muted=' + track.muted + ')');
-    remoteStream = stream;
-    try {
-      ensureCtx();
-      unlockAudio();
-      /* поток вешается на постоянный audio-элемент; источник в графе не пересоздаётся */
-      remoteAudioEl.srcObject = stream;
-      inGateState.open = false; inGateState.lastTarget = -1;
-      tryPlayRemote();
-      track.addEventListener('unmute', tryPlayRemote);
-      track.addEventListener('mute', () => debug('трек собеседника: mute'));
-      debug('remote подключён через audio-элемент (AudioContext: ' + audioCtx.state + ')');
-    } catch (err){
-      console.warn(err);
-      toast('Не удалось подключить звук собеседника', 'err');
-    }
+    debug('получен аудиопоток от ' + nickOf(peerId));
+    upsertRemoteTrack(peerId, e.track);
   };
   conn.onicecandidate = (e) => {
-    if (e.candidate && currentCallId && peerUid){
-      pushSignal({ type: 'candidate', from: currentUser.uid, to: peerUid, candidate: e.candidate.toJSON() }).catch(() => {});
+    if (e.candidate && currentCallId){
+      pushSignal({ type: 'candidate', from: currentUser.uid, to: peerId, candidate: e.candidate.toJSON() }).catch(() => {});
     }
   };
   conn.oniceconnectionstatechange = () => {
-    if (!conn) return;
     const s = conn.iceConnectionState;
-    debug('ICE: ' + s);
+    debug('ICE[' + nickOf(peerId) + ']: ' + s);
     if (s === 'connected' || s === 'completed'){
       if (callPhase !== 'live'){
         setPhase('live');
         callStartedAt = Date.now();
         toast('Соединение установлено', 'ok');
+      } else {
+        toast(nickOf(peerId) + ': на связи', 'ok');
       }
-    } else if (s === 'checking') setPhase('connecting');
-    else if (s === 'disconnected') el.statusText.textContent = 'Переподключение…';
-    else if (s === 'failed'){ toast('Сбой соединения', 'err'); endCall(false, 'Звонок прерван: сбой соединения'); }
+      renderParticipants();
+    } else if (s === 'checking'){
+      if (callPhase === 'dialing') setPhase('connecting');
+    } else if (s === 'disconnected'){
+      el.statusText.textContent = 'Переподключение…';
+    } else if (s === 'failed'){
+      toast('Сбой соединения с ' + nickOf(peerId), 'err');
+      removePeer(peerId);
+    } else if (s === 'closed'){
+      renderParticipants();
+    }
   };
 }
-function flushCandidates(){
-  const q = pendingCandidates.splice(0);
-  q.forEach(c => pc && pc.addIceCandidate(c).catch(() => {}));
+function flushCandidates(peerId){
+  const conn = pcs[peerId];
+  const q = pendingCandidates[peerId];
+  if (!conn || !q) return;
+  delete pendingCandidates[peerId];
+  q.forEach(c => conn.addIceCandidate(c).catch(() => {}));
+}
+
+/* --- исходящий offer конкретному участнику --- */
+async function makeOfferTo(peerId){
+  if (pcs[peerId] || !currentCallId) return;
+  try {
+    const conn = new RTCPeerConnection(RTC_CONFIG);
+    pcs[peerId] = conn;
+    attachCommon(conn, peerId);
+    addMyTrack(conn);
+    const offer = await conn.createOffer();
+    await conn.setLocalDescription(offer);
+    await pushSignal({ type: 'offer', from: currentUser.uid, to: peerId, sdp: offer.sdp });
+    debug('offer отправлен: ' + nickOf(peerId));
+  } catch (e){
+    console.warn(e);
+    toast('Не удалось соединиться с ' + nickOf(peerId), 'err');
+  }
+}
+
+/* --- входящий offer: отвечаем (так connects и звонящий, и приглашённый) --- */
+async function answerOffer(peerId, sdp){
+  if (!currentCallId || pcs[peerId]) return;
+  try {
+    const conn = new RTCPeerConnection(RTC_CONFIG);
+    pcs[peerId] = conn;
+    attachCommon(conn, peerId);
+    addMyTrack(conn);
+    await conn.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+    flushCandidates(peerId);
+    const answer = await conn.createAnswer();
+    await conn.setLocalDescription(answer);
+    await pushSignal({ type: 'answer', from: currentUser.uid, to: peerId, sdp: answer.sdp });
+    debug('answer отправлен: ' + nickOf(peerId));
+  } catch (e){
+    console.warn(e);
+    toast('Не удалось ответить ' + nickOf(peerId), 'err');
+  }
+}
+
+/* --- микс всех удалённых треков в один audio-элемент --- */
+function upsertRemoteTrack(peerId, track){
+  remoteTracks[peerId] = track;
+  track.addEventListener('unmute', tryPlayRemote);
+  track.addEventListener('ended', () => { delete remoteTracks[peerId]; rebuildMixed(); });
+  rebuildMixed();
+}
+function rebuildMixed(){
+  if (!remoteAudioEl) return;
+  const tracks = Object.values(remoteTracks).filter(t => t.readyState === 'live');
+  if (!tracks.length){
+    remoteAudioEl.pause();
+    remoteAudioEl.srcObject = null;
+    return;
+  }
+  remoteAudioEl.srcObject = new MediaStream(tracks);
+  inGateState.open = false; inGateState.lastTarget = -1;
+  tryPlayRemote();
+  debug('в миксе ' + tracks.length + ' трек(а), AudioContext: ' + audioCtx.state);
+}
+
+/* --- участник пропал / соединение разорвано --- */
+function removePeer(peerId){
+  const conn = pcs[peerId];
+  if (conn){ try { conn.close(); } catch (e){} delete pcs[peerId]; }
+  delete pendingCandidates[peerId];
+  if (remoteTracks[peerId]){ delete remoteTracks[peerId]; rebuildMixed(); }
+  renderParticipants();
+  if (currentCallId && callPhase === 'dialing' && !Object.keys(pcs).length){
+    endCall(false, 'Не дозвонились');
+  }
+}
+
+/* ---------- участники звонка ---------- */
+function subscribeMembers(callId){
+  if (membersUnsub){ membersUnsub(); membersUnsub = null; }
+  membersInitialized = false;
+  membersUnsub = onValue(ref(rtdb, `calls/${callId}/members`), snap => {
+    if (currentCallId !== callId) return;
+    const val = snap.val() || {};
+    const prev = callMembers;
+    callMembers = val;
+    const me = currentUser.uid;
+    if (membersInitialized){
+      for (const uid in val){
+        if (!prev[uid] && uid !== me){
+          const n = (val[uid] && val[uid].nickname) || 'Кто-то';
+          toast(n + ' присоединился к звонку', 'ok');
+          appendSystem(n + ' присоединился к звонку');
+        }
+      }
+      for (const uid in prev){
+        if (!val[uid] && uid !== me){
+          const n = (prev[uid] && prev[uid].nickname) || 'Собеседник';
+          removePeer(uid);
+          toast(n + ' вышел из звонка', 'info');
+          appendSystem(n + ' вышел из звонка');
+          if (!Object.keys(val).some(u => u !== me)) toast('Вы остались в звонке одни', 'warn');
+        }
+      }
+    }
+    membersInitialized = true;
+    renderParticipants();
+    updateDockHeader();
+  }, err => console.warn('members', err));
+}
+
+function renderParticipants(){
+  const box = el.participants;
+  if (!box) return;
+  box.innerHTML = '';
+  const me = currentUser.uid;
+  const ids = Object.keys(callMembers);
+  ids.forEach(uid => {
+    const info = callMembers[uid] || {};
+    const chip = document.createElement('span');
+    chip.className = 'p-chip' + (uid === me ? ' me' : '');
+    const av = document.createElement('span'); av.className = 'avatar';
+    paintAvatar(av, info.nickname || '?');
+    const nm = document.createElement('span'); nm.className = 'p-name';
+    nm.textContent = uid === me ? 'Вы' : (info.nickname || 'Аноним');
+    const dot = document.createElement('span'); dot.className = 'p-dot';
+    const conn = pcs[uid];
+    const st = conn ? conn.iceConnectionState : 'new';
+    dot.classList.add((st === 'connected' || st === 'completed' || uid === me) ? 'ok' : 'wait');
+    chip.append(av, nm, dot);
+    box.appendChild(chip);
+  });
+  if (ids.length < MAX_CALL_MEMBERS){
+    const add = document.createElement('button');
+    add.className = 'p-chip add';
+    add.type = 'button';
+    add.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>Позвать</span>';
+    add.addEventListener('click', toggleInvitePanel);
+    box.appendChild(add);
+  }
+}
+
+function updateDockHeader(){
+  const me = currentUser.uid;
+  const others = Object.entries(callMembers)
+    .filter(([uid]) => uid !== me)
+    .map(([, v]) => (v && v.nickname) || 'Аноним');
+  el.peerName.textContent = others.length ? others.join(', ') : 'Вы один в звонке';
+  paintAvatar(el.peerAvatar, others[0] || myNickname);
+}
+
+/* ---------- приглашения в активный звонок ---------- */
+function toggleInvitePanel(){
+  invitePanelOpen = !invitePanelOpen;
+  el.invitePanel.hidden = !invitePanelOpen;
+  if (invitePanelOpen){
+    el.inviteSeats.textContent = Math.max(0, MAX_CALL_MEMBERS - Object.keys(callMembers).length);
+    renderInviteOptions();
+  }
+}
+function closeInvitePanel(){
+  invitePanelOpen = false;
+  if (el.invitePanel) el.invitePanel.hidden = true;
+}
+function renderInviteOptions(){
+  const box = el.inviteList;
+  box.innerHTML = '';
+  const me = currentUser.uid;
+  const candidates = Object.entries(presenceMap)
+    .filter(([uid]) => uid !== me && !callMembers[uid])
+    .map(([uid, p]) => ({ uid, ...(p || {}) }))
+    .sort((a, b) => (a.nickname || '').localeCompare(b.nickname || '', 'ru'));
+  if (!candidates.length){
+    const p = document.createElement('p'); p.className = 'empty';
+    p.textContent = 'Больше никого нет в сети.';
+    box.appendChild(p);
+    return;
+  }
+  candidates.forEach(u => {
+    const row = document.createElement('div'); row.className = 'inv-row';
+    const av = document.createElement('span'); av.className = 'avatar'; paintAvatar(av, u.nickname);
+    const nm = document.createElement('span'); nm.className = 'inv-name'; nm.textContent = u.nickname || 'Аноним';
+    const st = document.createElement('span'); st.className = 'inv-state';
+    st.textContent = u.inCall ? 'в звонке' : 'в сети';
+    const btn = document.createElement('button'); btn.className = 'btn teal sm'; btn.type = 'button';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Позвать';
+    btn.addEventListener('click', () => sendInvite(u.uid, u.nickname));
+    row.append(av, nm, st, btn);
+    box.appendChild(row);
+  });
+}
+function sendInvite(uid, nick){
+  if (!currentCallId) return;
+  if (Object.keys(callMembers).length >= MAX_CALL_MEMBERS) return toast('В звонке уже 3 человека', 'warn');
+  pushSignal({ type: 'invite', from: currentUser.uid, to: uid, fromNick: myNickname }, currentCallId).catch(() => {});
+  toast('Приглашение отправлено: ' + (nick || 'участник'), 'ok');
+  closeInvitePanel();
 }
 
 /* ---------- исходящий звонок ---------- */
@@ -1308,33 +1530,29 @@ async function startCall(targetNick){
   if (presenceMap[targetUid] && presenceMap[targetUid].inCall) return toast(targetNick + ' сейчас разговаривает', 'warn');
 
   isCaller = true;
-  peerUid = targetUid; peerNickname = targetNick;
   currentCallId = currentUser.uid + '_' + targetUid + '_' + Date.now();
 
   try {
-    pc = new RTCPeerConnection(RTC_CONFIG);
-    attachCommon(pc);
-    const track = micDest.stream.getAudioTracks()[0];
-    if (track) pc.addTrack(track, micDest.stream);
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
     await set(ref(rtdb, `calls/${currentCallId}`), {
       caller: currentUser.uid, callerNick: myNickname,
       callee: targetUid, calleeNick: targetNick,
       status: 'ringing',
-      offer: { type: offer.type, sdp: offer.sdp },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      members: { [currentUser.uid]: { nickname: myNickname, joinedAt: Date.now() } }
     });
-    /* если вкладка умрёт — узел звонка удалится, и собеседник это увидит */
+    /* если вкладка умрёт — узел звонка удалится, и все участники это увидят */
     onDisconnect(ref(rtdb, `calls/${currentCallId}`)).remove();
     update(ref(rtdb, `presence/${currentUser.uid}`), { inCall: true }).catch(() => {});
 
+    callMembers = { [currentUser.uid]: { nickname: myNickname } };
     showDock(); setPhase('dialing');
+    renderParticipants(); updateDockHeader();
+    subscribeMembers(currentCallId);
     debug('звоним: ' + targetNick);
     dialTimer = setTimeout(() => {
       if (callPhase === 'dialing'){ toast(targetNick + ' не отвечает', 'warn'); endCall(true, ''); }
     }, 45000);
+    await makeOfferTo(targetUid);
   } catch (e){
     console.warn(e);
     toast('Не удалось начать звонок: ' + e.message, 'err');
@@ -1351,42 +1569,72 @@ function subscribeCalls(){
     const me = currentUser.uid;
     const calls = snap.val() || {};
 
-    /* --- наш активный звонок --- */
+    /* --- наш звонок: сигналы + существование узла --- */
     if (currentCallId){
       const c = calls[currentCallId];
-      if (c && c.signals) processSignals(c.signals);
       if (!c){
-        if (!tearingDown) endCall(false, 'Собеседник завершил звонок');
-      } else if (isCaller && callPhase === 'dialing' && c.status === 'active'){
-        setPhase('connecting');
+        if (!tearingDown) endCall(false, 'Звонок завершён');
+      } else {
+        if (c.signals) processSignals(c.signals);
+        if (isCaller && callPhase === 'dialing' && c.status === 'active') setPhase('connecting');
       }
     }
 
-    /* --- входящие --- */
-    if (!currentCallId){
-      let found = null;
-      for (const id in calls){
-        const c = calls[id];
-        if (c && c.callee === me && c.caller !== me && c.status === 'ringing' && c.offer){ found = { id, c }; break; }
-      }
-      if (found){
-        if (shownIncomingId !== found.id) showIncoming(found.id, found.c);
-      } else if (shownIncomingId){
-        hideIncoming(); /* звонящий отменил */
-      }
-    } else {
-      /* заняты — отвечаем отказом на новые попытки дозвона */
-      for (const id in calls){
-        const c = calls[id];
-        if (c && c.callee === me && c.caller !== me && c.status === 'ringing' && id !== currentCallId && !busyReplied.has(id)){
-          busyReplied.add(id);
+    /* --- входящие вызовы и приглашения --- */
+    for (const id in calls){
+      const c = calls[id];
+      if (!c) continue;
+      /* приглашения в активные звонки (даже когда мы заняты — ответим отказом) */
+      if (c.signals) scanInvites(id, c.signals);
+      /* входящий звонок 1-на-1 */
+      if (c.callee === me && c.caller !== me && c.status === 'ringing'){
+        if (!currentCallId){
+          if (shownIncomingId !== id){
+            stashOffers(id, c.signals);
+            showIncoming(id, c, null);
+          }
+        } else if (id !== currentCallId && !busyReplied.has(id)){
+          busyReplied.add(id); /* заняты — отвечаем отказом */
           pushSignal({ type: 'busy', from: me, to: c.caller }, id).catch(() => {});
         }
       }
     }
+    if (!currentCallId && shownIncomingId && !calls[shownIncomingId]){
+      hideIncoming(); /* звонящий отменил */
+    }
   }, err => console.warn('calls', err));
 }
 
+/* приходящие до ответа offer'ы копим, чтобы принять звонок в любой момент */
+function stashOffers(callId, signals){
+  if (!signals) return;
+  for (const sid in signals){
+    const s = signals[sid];
+    if (!s || s.to !== currentUser.uid || s.type !== 'offer') continue;
+    pendingOffers[callId + '_' + s.from] = s.sdp;
+  }
+}
+function scanInvites(callId, signals){
+  for (const sid in signals){
+    if (processedSignals.has(sid)) continue;
+    const s = signals[sid];
+    if (!s || s.to !== currentUser.uid || s.type !== 'invite') continue;
+    processedSignals.add(sid);
+    handleInviteSignal(callId, s);
+  }
+}
+function handleInviteSignal(callId, s){
+  if (shownIncomingId) return; /* уже кто-то звонит */
+  if (currentCallId){          /* заняты — вежливо отказываем */
+    pushSignal({ type: 'invite-decline', from: currentUser.uid, to: s.from, fromNick: myNickname }, currentCallId).catch(() => {});
+    return;
+  }
+  pendingInvite = { callId, from: s.from, fromNick: s.fromNick || 'Кто-то' };
+  showIncoming(callId, null, pendingInvite);
+  debug('приглашение в звонок от ' + pendingInvite.fromNick);
+}
+
+/* ---------- сигналы нашего звонка (по каждому участнику отдельно) ---------- */
 function processSignals(signals){
   for (const sid in signals){
     if (processedSignals.has(sid)) continue;
@@ -1394,25 +1642,38 @@ function processSignals(signals){
     if (!s || s.to !== currentUser.uid) continue;
     processedSignals.add(sid);
 
-    if (s.type === 'answer'){
-      if (pc && pc.signalingState === 'have-local-offer'){
-        pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: s.sdp }))
-          .then(() => { flushCandidates(); setPhase('connecting'); debug('получен answer'); })
+    if (s.type === 'offer'){
+      /* новый участник стучится к нам (или звонящий, если мы приняли вызов) */
+      answerOffer(s.from, s.sdp);
+    } else if (s.type === 'answer'){
+      const conn = pcs[s.from];
+      if (conn && conn.signalingState === 'have-local-offer'){
+        conn.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: s.sdp }))
+          .then(() => { flushCandidates(s.from); if (callPhase === 'dialing') setPhase('connecting'); debug('получен answer от ' + nickOf(s.from)); })
           .catch(err => console.warn('answer', err));
       }
     } else if (s.type === 'candidate'){
-      if (!pc) continue;
+      const conn = pcs[s.from];
+      if (!conn) continue;
       const cand = new RTCIceCandidate(s.candidate);
-      if (pc.remoteDescription) pc.addIceCandidate(cand).catch(() => {});
-      else pendingCandidates.push(cand); /* ВАЖНО: не теряем ранние кандидаты */
+      if (conn.remoteDescription) conn.addIceCandidate(cand).catch(() => {});
+      else (pendingCandidates[s.from] = pendingCandidates[s.from] || []).push(cand);
     } else if (s.type === 'reject'){
-      toast((peerNickname || 'Собеседник') + ' отклонил звонок', 'warn');
-      endCall(true, '');
+      removePeer(s.from);
+      toast('Звонок отклонён', 'warn');
+      if (callPhase !== 'live') endCall(true, '');
     } else if (s.type === 'busy'){
-      toast((peerNickname || 'Собеседник') + ' сейчас занят', 'warn');
-      endCall(true, '');
+      removePeer(s.from);
+      toast('Абонент занят', 'warn');
+      if (callPhase !== 'live') endCall(true, '');
     } else if (s.type === 'hangup'){
-      endCall(false, 'Собеседник завершил звонок');
+      const nick = s.fromNick || nickOf(s.from);
+      const others = Object.keys(callMembers).filter(u => u !== currentUser.uid && u !== s.from);
+      removePeer(s.from);
+      if (!others.length) endCall(false, nick + ' завершил звонок');
+      /* иначе он просто вышел из группового — объявит подписка на members */
+    } else if (s.type === 'invite-decline'){
+      toast((s.fromNick || 'Собеседник') + ' отклонил приглашение', 'warn');
     }
   }
 }
@@ -1456,15 +1717,26 @@ function stopTitleFlash(){
   document.title = ORIG_TITLE;
 }
 
-function showIncoming(callId, call){
+function showIncoming(callId, call, invite){
   shownIncomingId = callId;
-  pendingIncoming = { callId, call };
-  el.callerName.textContent = call.callerNick || 'Неизвестный';
-  paintAvatar(el.inAvatar, call.callerNick);
+  if (invite){
+    pendingIncoming = { mode: 'invite', callId, invite };
+    el.callLabel.textContent = 'Приглашение в звонок';
+    el.callerName.textContent = invite.fromNick;
+    paintAvatar(el.inAvatar, invite.fromNick);
+    el.inviteInfo.hidden = false;
+    el.inviteInfo.textContent = invite.fromNick + ' зовёт вас присоединиться к активному звонку';
+  } else {
+    pendingIncoming = { mode: 'call', callId, call };
+    el.callLabel.textContent = 'Входящий звонок';
+    el.callerName.textContent = call.callerNick || 'Неизвестный';
+    paintAvatar(el.inAvatar, call.callerNick);
+    el.inviteInfo.hidden = true;
+  }
   el.modal.hidden = false;
   startRingtone();
   startTitleFlash();
-  debug('входящий звонок от ' + (call.callerNick || '?'));
+  debug('входящий ' + (invite ? 'приглашение' : 'звонок') + ' от ' + (invite ? invite.fromNick : (call.callerNick || '?')));
 }
 function hideIncoming(){
   stopRingtone(); stopTitleFlash();
@@ -1482,10 +1754,15 @@ el.acceptBtn.addEventListener('click', async () => {
       try { await enableMic(); }
       catch (e){
         toast('Нужен доступ к микрофону, чтобы ответить', 'err');
-        /* сообщаем звонящему, что звонок не принят */
+        /* сообщаем инициатору, что вызов не принят */
         try {
-          await pushSignal({ type: 'reject', from: currentUser.uid, to: pendingIncoming.call.caller }, pendingIncoming.callId);
-          await remove(ref(rtdb, `calls/${pendingIncoming.callId}`));
+          const p = pendingIncoming;
+          if (p.mode === 'call'){
+            await pushSignal({ type: 'reject', from: currentUser.uid, to: p.call.caller }, p.callId);
+            await remove(ref(rtdb, `calls/${p.callId}`));
+          } else {
+            await pushSignal({ type: 'invite-decline', from: currentUser.uid, to: p.invite.from, fromNick: myNickname }, p.callId);
+          }
         } catch (err){}
         hideIncoming();
         return;
@@ -1495,61 +1772,108 @@ el.acceptBtn.addEventListener('click', async () => {
     const check = await get(ref(rtdb, `calls/${pendingIncoming.callId}`));
     if (!check.exists()){ hideIncoming(); toast('Звонок уже отменён', 'warn'); return; }
 
-    const { callId, call } = pendingIncoming;
-    hideIncoming();
-    isCaller = false;
-    currentCallId = callId;
-    peerUid = call.caller;
-    peerNickname = call.callerNick || 'Собеседник';
-
-    showDock(); setPhase('connecting');
-    update(ref(rtdb, `presence/${currentUser.uid}`), { inCall: true }).catch(() => {});
-    await set(ref(rtdb, `calls/${callId}/status`), 'active');
-    onDisconnect(ref(rtdb, `calls/${callId}`)).remove();
-
-    pc = new RTCPeerConnection(RTC_CONFIG);
-    attachCommon(pc);
-    const track = micDest.stream.getAudioTracks()[0];
-    if (track) pc.addTrack(track, micDest.stream);
-
-    await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
-    flushCandidates();
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await pushSignal({ type: 'answer', from: currentUser.uid, to: peerUid, sdp: answer.sdp });
-    debug('отправлен answer');
+    const p = pendingIncoming;
+    if (p.mode === 'invite') await joinCall(p.callId, p.invite.from);
+    else await acceptCall(p.callId, p.call);
   } catch (e){
     console.warn(e);
-    toast('Не удалось принять звонок: ' + e.message, 'err');
+    toast('Не удалось принять: ' + e.message, 'err');
     resetCallState();
   } finally { el.acceptBtn.disabled = false; }
 });
 
+/* --- принять обычный звонок 1-на-1 --- */
+async function acceptCall(callId, call){
+  /* звонящий мог отменить за мгновение до этого */
+  const check = await get(ref(rtdb, `calls/${callId}`));
+  if (!check.exists()){ hideIncoming(); toast('Звонок уже отменён', 'warn'); return; }
+
+  hideIncoming();
+  isCaller = false;
+  currentCallId = callId;
+  callMembers = { [currentUser.uid]: { nickname: myNickname } };
+
+  showDock(); setPhase('connecting');
+  renderParticipants(); updateDockHeader();
+  update(ref(rtdb, `presence/${currentUser.uid}`), { inCall: true }).catch(() => {});
+  await set(ref(rtdb, `calls/${callId}/status`), 'active');
+  await set(ref(rtdb, `calls/${callId}/members/${currentUser.uid}`), { nickname: myNickname, joinedAt: Date.now() });
+  onDisconnect(ref(rtdb, `calls/${callId}`)).remove();
+  subscribeMembers(callId);
+
+  /* offer звонящего уже накоплен в сигналах (или придёт — обработается сам) */
+  const stored = pendingOffers[callId + '_' + call.caller];
+  if (stored) answerOffer(call.caller, stored);
+  debug('звонок принят');
+}
+
+/* --- присоединиться к активному звонку по приглашению (mesh: офферим всем) --- */
+async function joinCall(callId, inviterUid){
+  const check = await get(ref(rtdb, `calls/${callId}`));
+  if (!check.exists()){ hideIncoming(); toast('Звонок уже завершён', 'warn'); return; }
+  const members = (check.val() || {}).members || {};
+  if (Object.keys(members).length >= MAX_CALL_MEMBERS){
+    hideIncoming();
+    toast('В звонке уже 3 человека', 'warn');
+    pushSignal({ type: 'invite-decline', from: currentUser.uid, to: inviterUid, fromNick: myNickname }, callId).catch(() => {});
+    return;
+  }
+
+  hideIncoming();
+  isCaller = false;
+  currentCallId = callId;
+  callMembers = { [currentUser.uid]: { nickname: myNickname } };
+
+  showDock(); setPhase('connecting');
+  renderParticipants(); updateDockHeader();
+  update(ref(rtdb, `presence/${currentUser.uid}`), { inCall: true }).catch(() => {});
+  await set(ref(rtdb, `calls/${callId}/members/${currentUser.uid}`), { nickname: myNickname, joinedAt: Date.now() });
+  onDisconnect(ref(rtdb, `calls/${callId}`)).remove();
+  subscribeMembers(callId);
+
+  /* соединяемся напрямую с каждым, кто уже в звонке */
+  for (const uid in members){
+    if (uid !== currentUser.uid) makeOfferTo(uid);
+  }
+  debug('присоединился к звонку, участников: ' + (Object.keys(members).length + 1));
+}
+
 el.rejectBtn.addEventListener('click', async () => {
   if (!pendingIncoming) return;
-  const { callId, call } = pendingIncoming;
+  const p = pendingIncoming;
   try {
-    await pushSignal({ type: 'reject', from: currentUser.uid, to: call.caller }, callId);
-    await remove(ref(rtdb, `calls/${callId}`));
+    if (p.mode === 'call'){
+      await pushSignal({ type: 'reject', from: currentUser.uid, to: p.call.caller }, p.callId);
+      await remove(ref(rtdb, `calls/${p.callId}`));
+      appendSystem('входящий звонок отклонён');
+    } else {
+      await pushSignal({ type: 'invite-decline', from: currentUser.uid, to: p.invite.from, fromNick: myNickname }, p.callId);
+      appendSystem('приглашение отклонено');
+    }
   } catch (e){ console.warn(e); }
   hideIncoming();
-  appendSystem('входящий звонок отклонён');
-  debug('звонок отклонён');
+  debug('отклонено');
 });
 
 /* ---------- завершение звонка ---------- */
 function resetCallState(){
   if (dialTimer){ clearTimeout(dialTimer); dialTimer = null; }
   stopRingtone(); stopTitleFlash(); stopAudioWatchdog();
-  if (pc){ try { pc.close(); } catch (e){} pc = null; }
+  for (const uid in pcs){ try { pcs[uid].close(); } catch (e){} delete pcs[uid]; }
+  for (const uid in remoteTracks) delete remoteTracks[uid];
+  for (const k in pendingOffers) delete pendingOffers[k];
+  for (const k in pendingCandidates) delete pendingCandidates[k];
+  if (membersUnsub){ membersUnsub(); membersUnsub = null; }
+  callMembers = {}; membersInitialized = false;
+  pendingInvite = null;
+  closeInvitePanel();
   /* элемент и источник в графе НЕ пересоздаём — только сбрасываем поток */
-  if (remoteAudioEl){ remoteAudioEl.pause(); remoteAudioEl.srcObject = null; }
-  if (remoteStream){ remoteStream.getTracks().forEach(t => { try { t.stop(); } catch (e){} }); remoteStream = null; }
+  rebuildMixed();
   if (el.audioDiag) el.audioDiag.textContent = '';
-  currentCallId = null; peerUid = null; peerNickname = null;
+  if (el.participants) el.participants.innerHTML = '';
+  currentCallId = null;
   callStartedAt = 0; callPhase = 'idle'; isCaller = false;
   processedSignals.clear();
-  pendingCandidates.length = 0;
   busyReplied.clear();
   shownIncomingId = null;
   hideDock();
@@ -1566,8 +1890,16 @@ function endCall(byMe, notifyMsg){
     if (id){
       onDisconnect(ref(rtdb, `calls/${id}`)).cancel().catch(() => {});
       if (byMe){
-        if (peerUid) pushSignal({ type: 'hangup', from: currentUser.uid, to: peerUid }, id).catch(() => {});
-        remove(ref(rtdb, `calls/${id}`)).catch(() => {});
+        const me = currentUser.uid;
+        /* уведомляем каждого участника и выходим из состава */
+        Object.keys(callMembers).forEach(uid => {
+          if (uid !== me) pushSignal({ type: 'hangup', from: me, to: uid, fromNick: myNickname }, id).catch(() => {});
+        });
+        remove(ref(rtdb, `calls/${id}/members/${me}`)).catch(() => {});
+        /* если в звонке никого не осталось — приберём узел целиком */
+        if (!Object.keys(callMembers).some(u => u !== me)){
+          remove(ref(rtdb, `calls/${id}`)).catch(() => {});
+        }
       }
     }
   } catch (e){ console.warn(e); }
@@ -1578,6 +1910,7 @@ function endCall(byMe, notifyMsg){
   debug('звонок завершён');
 }
 el.hangupBtn.addEventListener('click', () => endCall(true, ''));
+el.inviteCloseBtn.addEventListener('click', closeInvitePanel);
 
 /* ================================================================
    СТАРТ
